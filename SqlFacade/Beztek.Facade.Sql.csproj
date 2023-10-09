@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0</TargetFramework>
+    <id>Beztek.Facade.Sql</id>
+    <version>1.0.0</version>
+    <authors>Peter Thomas</authors>
+    <owners>Beztek Software Solutions</owners>
+    <licenseUrl>https://github.com/Beztek-Software-Solutions/sql-facade/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/Beztek-Software-Solutions/sql-facade</projectUrl>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <description>Facade for database portable SQL ORM based on SQLKata and Dapper</description>
+    <releaseNotes>Facade for database portable SQL ORM based on SQLKata and Dapper</releaseNotes>
+    <copyright>Copyright 2023, Beztek Software Solutions</copyright>
+    <tags>Beztek.Facade.Sql;sql-facade;SqlFacade</tags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="7.0.11" />
+    <PackageReference Include="Npgsql" Version="7.0.6" />
+    <PackageReference Include="SqlKata" Version="2.4.0" />
+    <PackageReference Include="SqlKata.Execution" Version="2.4.0" />
+    <PackageReference Include="System.Data.SqlClient" Version="4.8.5" />
+  </ItemGroup>
+</Project>

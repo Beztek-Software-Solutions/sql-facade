@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlFacade", "SqlFacade\Beztek.Facade.Sql.csproj", "{947F471C-60B4-4959-B92D-B97DFB577E50}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlFacade.Example", "SqlFacade.Example\Beztek.Facade.Sql.Example.csproj", "{9C1D8C05-956F-4930-AC44-876558202133}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlFacade.Test", "SqlFacade.Tests\Beztek.Facade.Sql.Test.csproj", "{1DC5C6F6-FC87-4AAA-AFB3-5D1176E7A345}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{947F471C-60B4-4959-B92D-B97DFB577E50}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{947F471C-60B4-4959-B92D-B97DFB577E50}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{947F471C-60B4-4959-B92D-B97DFB577E50}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{947F471C-60B4-4959-B92D-B97DFB577E50}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9C1D8C05-956F-4930-AC44-876558202133}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9C1D8C05-956F-4930-AC44-876558202133}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9C1D8C05-956F-4930-AC44-876558202133}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9C1D8C05-956F-4930-AC44-876558202133}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1DC5C6F6-FC87-4AAA-AFB3-5D1176E7A345}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1DC5C6F6-FC87-4AAA-AFB3-5D1176E7A345}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1DC5C6F6-FC87-4AAA-AFB3-5D1176E7A345}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1DC5C6F6-FC87-4AAA-AFB3-5D1176E7A345}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,7 @@
+.vscode/*
+SqlFacade/bin/*
+SqlFacade/obj/*
+SqlFacade.Example/bin/*
+SqlFacade.Example/obj/*
+SqlFacade.Tests/bin/*
+SqlFacade.Tests/obj/*
