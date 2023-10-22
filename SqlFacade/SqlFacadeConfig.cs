@@ -48,7 +48,6 @@ namespace Beztek.Facade.Sql
             else if (DbType == DbType.SQLSERVER)
             {
                 SqlConnection conn = new SqlConnection(this.ConnectionString);
-
                 conn.Open();
 
                 // Explicitly enlist the current transaction, to support transaction scoping

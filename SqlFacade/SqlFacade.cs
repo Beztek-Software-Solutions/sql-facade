@@ -4,7 +4,6 @@ namespace Beztek.Facade.Sql
 {
     using System;
     using System.Collections.Generic;
-    using System.Data;
     using System.Text.Json;
     using System.Transactions;
     using Dapper;
@@ -114,8 +113,7 @@ namespace Beztek.Facade.Sql
         {
             using TransactionScope transactionScope = new TransactionScope(System.Transactions.Transaction.Current != null ? TransactionScopeOption.RequiresNew : TransactionScopeOption.Required);
 
-            IDbConnection connection = sqlFacadeConfig.GetConnection();
-            using QFactory qFactory = new QFactory(sqlFacadeConfig.DbType, connection);
+            using QFactory qFactory = new QFactory(sqlFacadeConfig);
             try
             {
                 V result = func(qFactory, parameters);
@@ -137,7 +135,6 @@ namespace Beztek.Facade.Sql
             if (castException != null)
                 throw castException;
 
-            Console.WriteLine($"Exception: {description} - {exception.StackTrace}");
             throw new ArgumentException(description, exception);
         }
 

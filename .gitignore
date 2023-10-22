@@ -1,4 +1,5 @@
 .vscode/*
+.vs/*
 SqlFacade/bin/*
 SqlFacade/obj/*
 SqlFacade.Example/bin/*

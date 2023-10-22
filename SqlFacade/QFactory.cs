@@ -16,12 +16,16 @@ namespace Beztek.Facade.Sql
 
         private static Dictionary<DbType, Compiler> compilers = new Dictionary<DbType, Compiler>();
 
-        internal QFactory(DbType dbType, IDbConnection connection)
+        internal QFactory(SqlFacadeConfig config)
         {
-            this.dbType = dbType;
+            this.dbType = config.DbType;
             Compiler compiler = GetCompiler(dbType);
-            Factory = new QueryFactory(connection, compiler);
-            Factory.Connection.Open();
+            Factory = new QueryFactory(config.GetConnection(), compiler);
+
+            if (Factory.Connection.State == ConnectionState.Closed)
+            {
+                Factory.Connection.Open();
+            }
         }
 
         /// <inheritdoc />
@@ -45,6 +49,11 @@ namespace Beztek.Facade.Sql
                 if (dbType == DbType.POSTGRES)
                 {
                     compiler = new PostgresCompiler();
+                    compilers.Add(dbType, compiler);
+                }
+                else if (dbType == DbType.SQLSERVER)
+                {
+                    compiler = new SqlServerCompiler();
                     compilers.Add(dbType, compiler);
                 }
                 else if (dbType == DbType.SQLITE)
