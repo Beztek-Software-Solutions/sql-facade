@@ -4,7 +4,9 @@ namespace Beztek.Facade.Sql
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Text.Json;
+    using System.Text.Json.Serialization;
     using System.Transactions;
     using Dapper;
     using SqlKata;
@@ -425,7 +427,14 @@ namespace Beztek.Facade.Sql
                 {
                     if (Object.Equals(logicalRelation, LogicalRelation.And))
                     {
-                        query.WhereRaw(expression.Name, (object[])expression.Value);
+                        if (expression.Value is JsonElement)
+                        {
+                            query.WhereRaw(expression.Name, JsonSerializer.Deserialize<object[]>(expression.Value.ToString()));
+                        }
+                        else
+                        {
+                            query.WhereRaw(expression.Name, (object[])expression.Value);
+                        }
                     }
                     else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                     {
@@ -469,13 +478,27 @@ namespace Beztek.Facade.Sql
                     }
                     else if (Object.Equals(expression.Relation, Relation.In))
                     {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
+                        if (expression.Value is JsonElement)
                         {
-                            query.WhereIn(expression.Name, (IEnumerable<string>)expression.Value);
+                            if (Object.Equals(logicalRelation, LogicalRelation.And))
+                            {
+                                query.WhereIn(expression.Name, JsonSerializer.Deserialize<IEnumerable<string>>(expression.Value.ToString()));
+                            }
+                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+                            {
+                                query.WhereNotIn(expression.Name, JsonSerializer.Deserialize<IEnumerable<string>>(expression.Value.ToString()));
+                            }
                         }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+                        else
                         {
-                            query.WhereNotIn(expression.Name, (IEnumerable<string>)expression.Value);
+                            if (Object.Equals(logicalRelation, LogicalRelation.And))
+                            {
+                                query.WhereIn(expression.Name, (IEnumerable<string>)expression.Value);
+                            }
+                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+                            {
+                                query.WhereNotIn(expression.Name, (IEnumerable<string>)expression.Value);
+                            }
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.StartsWith))

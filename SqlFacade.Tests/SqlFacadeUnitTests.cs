@@ -275,6 +275,10 @@ namespace Beztek.Facade.Sql.Test
                                             .WithExpression(new Expression("id", new string[] { "uuid-13", "uuid-336" })
                                             .WithRelation(Relation.In)
                                             .WithLogicalRelation(logicalRelation)));
+                    // serialize query and then deserialize it.
+                    string jsonQuery = sqlSelect.ToString();
+                    sqlSelect = (SqlSelect) sqlFacade.DeserializeFromJson(jsonQuery);
+                    
                     results = sqlFacade.GetResults<Canvas>(sqlSelect);
                     Assert.AreEqual(2, results.Count);
                     Assert.AreEqual(canvas13, results[0]);
