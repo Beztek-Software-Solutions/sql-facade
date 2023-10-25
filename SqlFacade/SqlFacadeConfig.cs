@@ -39,6 +39,7 @@ namespace Beztek.Facade.Sql
             if (DbType == DbType.POSTGRES)
             {
                 NpgsqlConnection conn = new NpgsqlConnection(this.ConnectionString);
+                conn.Open();
 
                 // Explicitly enlist the current transaction, to support transaction scoping
                 conn.EnlistTransaction(Transaction.Current);

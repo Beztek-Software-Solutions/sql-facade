@@ -21,11 +21,6 @@ namespace Beztek.Facade.Sql
             this.dbType = config.DbType;
             Compiler compiler = GetCompiler(dbType);
             Factory = new QueryFactory(config.GetConnection(), compiler);
-
-            if (Factory.Connection.State == ConnectionState.Closed)
-            {
-                Factory.Connection.Open();
-            }
         }
 
         /// <inheritdoc />
