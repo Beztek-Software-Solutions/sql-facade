@@ -29,17 +29,17 @@ namespace Beztek.Facade.Sql.Example
             SqlInsert sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "123"))
                 .WithField(new Field("color", "green"));
-            Console.WriteLine($"VwacSql: {sqlInsert.ToString()}");
+            Console.WriteLine($"CanvasSql: {sqlInsert.ToString()}");
             sqlInsertList.Add(sqlInsert);
             sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "another-uuid"))
                 .WithField(new Field("color", "red"));
-            Console.WriteLine($"VwacSql: {sqlInsert.ToString()}");
+            Console.WriteLine($"CanvasSql: {sqlInsert.ToString()}");
             sqlInsertList.Add(sqlInsert);
             sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "greencanvas"))
                 .WithField(new Field("color", "green"));
-            Console.WriteLine($"VwacSql: {sqlInsert.ToString()}");
+            Console.WriteLine($"CanvasSql: {sqlInsert.ToString()}");
             sqlInsertList.Add(sqlInsert);
             IList<int> results = sqlFacade.ExecuteMultiSqlWrite(sqlInsertList);
             foreach (Object result in results)
@@ -255,12 +255,12 @@ namespace Beztek.Facade.Sql.Example
             return sqlFacade.ExecuteMultiSqlWrite(sqlInserts);
         }
 
-        private static void log(String label, ISql vwacSql, string summaryLog = null)
+        private static void log(String label, ISql CanvasSql, string summaryLog = null)
         {
-            Console.WriteLine($"{label}: {vwacSql.ToString()}");
-            Console.WriteLine($"      Sql Template: {sqlFacade.GetSql(vwacSql, true)}");
-            Console.WriteLine($"      Raw Sql: {sqlFacade.GetSql(vwacSql, false)}");
-            Console.WriteLine($"      Deserialized: {sqlFacade.DeserializeFromJson(vwacSql.ToString()).ToString()}");
+            Console.WriteLine($"{label}: {CanvasSql.ToString()}");
+            Console.WriteLine($"      Sql Template: {sqlFacade.GetSql(CanvasSql, true)}");
+            Console.WriteLine($"      Raw Sql: {sqlFacade.GetSql(CanvasSql, false)}");
+            Console.WriteLine($"      Deserialized: {sqlFacade.DeserializeFromJson(CanvasSql.ToString()).ToString()}");
             if (summaryLog != null)
             {
                 Console.WriteLine(summaryLog);

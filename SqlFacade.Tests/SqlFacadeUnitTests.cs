@@ -379,6 +379,27 @@ namespace Beztek.Facade.Sql.Test
                                                 .WithLogicalRelation(logicalRelation))));
                 Assert.AreEqual(0, results.Count);
 
+                // In Subquery
+                SqlSelect subQuery = new SqlSelect("canvas").WithField(new Field("id"))
+                                        .WithWhere(new Filter().WithExpression(new Expression("id", "uuid-32")));
+                results = sqlFacade.GetResults<Canvas>(new SqlSelect("canvas")
+                                        .WithWhere(GetBaseFilter(isAnd, isFirst)
+                                                .WithExpression(new Expression()
+                                                .WithSqlIn("id", subQuery)
+                                                .WithLogicalRelation(logicalRelation))));
+                Assert.AreEqual(1, results.Count);
+
+                // Not In Subquery
+                subQuery = new SqlSelect("canvas").WithField(new Field("id"))
+                                        .WithWhere(new Filter().WithExpression(new Expression("id", "uuid-32")));
+                SqlSelect currQuery = new SqlSelect("canvas")
+                                        .WithWhere(GetBaseFilter(isAnd, isFirst)
+                                                .WithExpression(new Expression()
+                                                .WithSqlIn("id", subQuery)
+                                                .WithLogicalRelation(negationRelation)));
+                results = sqlFacade.GetResults<Canvas>(currQuery);
+                Assert.AreEqual(((!isAnd) && (!isFirst) ? 999 : 1000), results.Count);
+
                 // Starts With
                 sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
                                         .WithExpression(new Expression("id", "uuid-1")

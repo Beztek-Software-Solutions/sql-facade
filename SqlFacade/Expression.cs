@@ -38,6 +38,15 @@ namespace Beztek.Facade.Sql
             return this;
         }
 
+        public Expression WithSqlIn(string name, SqlSelect sqlSelect)
+        {
+            this.Value = sqlSelect;
+            this.Relation = Relation.In;
+            // Placeholder name that is never used. We only need the SqlSelect in the Value
+            this.Name = name;
+            return this;
+        }
+
         public Expression WithRelation(Relation relation)
         {
             this.Relation = relation;
