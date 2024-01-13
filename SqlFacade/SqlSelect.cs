@@ -4,12 +4,15 @@ namespace Beztek.Facade.Sql
 {
     using System.Collections.Generic;
     using System.Text.Json;
+    using System.Text.Json.Serialization;
 
     public class SqlSelect : ISql
     {
         public string SqlType { get; }
+        public string From { get; }
         public Table Table { get; set; }
         public DerivedTable FromDerivedTable { get; set; }
+        public IList<CommonTableExpression> CommonTableExpressions { get; set; }
         public IList<Field> Fields { get; set; }
         public IList<Join> Joins { get; set; }
         public Filter Where { get; set; }
@@ -25,7 +28,7 @@ namespace Beztek.Facade.Sql
 
         public SqlSelect(string from) : this()
         {
-            this.Table = new Table(from);
+            this.From = from;
         }
 
         public SqlSelect(Table table) : this()
@@ -36,6 +39,21 @@ namespace Beztek.Facade.Sql
         public SqlSelect(DerivedTable fromDerivedTable) : this()
         {
             FromDerivedTable = fromDerivedTable;
+        }
+        
+        public SqlSelect(CommonTableExpression fromCTE) : this()
+        {
+            FromDerivedTable = fromCTE;
+        }
+
+        public SqlSelect WithCommonTableExpression(CommonTableExpression commonTableExpression)
+        {
+            if (CommonTableExpressions == null)
+            {
+                CommonTableExpressions = new List<CommonTableExpression>();
+            }
+            this.CommonTableExpressions.Add(commonTableExpression);
+            return this;
         }
 
         public SqlSelect WithField(Field field)
@@ -102,8 +120,9 @@ namespace Beztek.Facade.Sql
 
         public override string ToString()
         {
-            JsonSerializerOptions options = new JsonSerializerOptions();
-            options.IgnoreNullValues = true;
+            JsonSerializerOptions options = new JsonSerializerOptions {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
             return JsonSerializer.Serialize(this, options);
         }
     }

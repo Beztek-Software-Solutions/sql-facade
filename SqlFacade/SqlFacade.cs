@@ -229,7 +229,11 @@ namespace Beztek.Facade.Sql
 
         private Query BuildSelectQuery(Query query, SqlSelect sqlSelect)
         {
-            if (sqlSelect.Table != null)
+            if (sqlSelect.From != null)
+            {
+                query.From(sqlSelect.From);
+            }
+            else if (sqlSelect.Table != null)
             {
                 query.From(sqlSelect.Table.Alias == null ? sqlSelect.Table.Name : sqlSelect.Table.Name + " as " + sqlSelect.Table.Alias);
             }
@@ -238,6 +242,24 @@ namespace Beztek.Facade.Sql
                 // Derived Table
                 Query derivedTable = BuildSelectQuery(new Query(), sqlSelect.FromDerivedTable.Select).As(sqlSelect.FromDerivedTable.Alias);
                 query.From(derivedTable);
+            }
+
+            // Common Table Expressions
+            if (sqlSelect.CommonTableExpressions != null)
+            {
+                foreach (CommonTableExpression commonTableExpression in sqlSelect.CommonTableExpressions)
+                {
+                    Query cte = new Query();
+                    if (commonTableExpression.RawSql != null)
+                    {
+                        query.WithRaw(commonTableExpression.Alias, commonTableExpression.RawSql);
+                    }
+                    else
+                    {
+                        BuildSelectQuery(cte, commonTableExpression.Select);
+                        query.With(commonTableExpression.Alias, cte);
+                    }
+                }
             }
 
             // Fields and Raw fields
@@ -857,6 +879,24 @@ namespace Beztek.Facade.Sql
         {
             query.From(sqlUpdate.Table);
 
+            // Common Table Expressions
+            if (sqlUpdate.CommonTableExpressions != null)
+            {
+                foreach (CommonTableExpression commonTableExpression in sqlUpdate.CommonTableExpressions)
+                {
+                    Query cte = new Query();
+                    if (commonTableExpression.RawSql != null)
+                    {
+                        query.WithRaw(commonTableExpression.Alias, commonTableExpression.RawSql);
+                    }
+                    else
+                    {
+                        BuildSelectQuery(cte, commonTableExpression.Select);
+                        query.With(commonTableExpression.Alias, cte);
+                    }
+                }
+            }
+
             if (sqlUpdate.Filters != null)
             {
                 bool isFirst = true;
@@ -879,6 +919,24 @@ namespace Beztek.Facade.Sql
         private void BuildInsertQuery(Query query, SqlInsert sqlInsert)
         {
             query.From(sqlInsert.Table);
+
+            // Common Table Expressions
+            if (sqlInsert.CommonTableExpressions != null)
+            {
+                foreach (CommonTableExpression commonTableExpression in sqlInsert.CommonTableExpressions)
+                {
+                    Query cte = new Query();
+                    if (commonTableExpression.RawSql != null)
+                    {
+                        query.WithRaw(commonTableExpression.Alias, commonTableExpression.RawSql);
+                    }
+                    else
+                    {
+                        BuildSelectQuery(cte, commonTableExpression.Select);
+                        query.With(commonTableExpression.Alias, cte);
+                    }
+                }
+            }
 
             if (sqlInsert.Query != null)
             // In case of insert from query
@@ -909,6 +967,24 @@ namespace Beztek.Facade.Sql
         private void BuildDeleteQuery(Query query, SqlDelete sqlDelete)
         {
             query.From(sqlDelete.Table);
+
+            // Common Table Expressions
+            if (sqlDelete.CommonTableExpressions != null)
+            {
+                foreach (CommonTableExpression commonTableExpression in sqlDelete.CommonTableExpressions)
+                {
+                    Query cte = new Query();
+                    if (commonTableExpression.RawSql != null)
+                    {
+                        query.WithRaw(commonTableExpression.Alias, commonTableExpression.RawSql);
+                    }
+                    else
+                    {
+                        BuildSelectQuery(cte, commonTableExpression.Select);
+                        query.With(commonTableExpression.Alias, cte);
+                    }
+                }
+            }
 
             if (sqlDelete.Filters != null)
             {

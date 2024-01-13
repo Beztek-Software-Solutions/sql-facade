@@ -120,6 +120,40 @@ namespace Beztek.Facade.Sql.Test
         }
 
         [Test]
+        public void TestCommonTableExpressions()
+        {
+            CleanDB();
+            InsertThreeCanvases();
+
+            // Common Table Expression with SqlSelect
+            SqlSelect subSelect = new SqlSelect(new Table("canvas"))
+                .WithField(new Field("id"))
+                .WithField(new Field("color"))
+                .WithField(new Field("\'Pseudo data from derived table\'", "ExtraData", true));
+            Assert.IsTrue(String.Equals(subSelect.ToString(), sqlFacade.DeserializeFromJson(subSelect.ToString()).ToString()));
+            CommonTableExpression cte1 = new CommonTableExpression(subSelect, "c1");    
+            SqlSelect sqlSelect = new SqlSelect("c1").WithCommonTableExpression(cte1);
+            IList<CanvasExtended> canvasExtendedList = sqlFacade.GetResults<CanvasExtended>(sqlSelect);
+            List<CanvasExtended> expectedCanvasExtendedList = new List<CanvasExtended>();
+            expectedCanvasExtendedList.Add(CreateCanvasExtended("123", "green", "Pseudo data from derived table"));
+            expectedCanvasExtendedList.Add(CreateCanvasExtended("greencanvas", "green", "Pseudo data from derived table"));
+            expectedCanvasExtendedList.Add(CreateCanvasExtended("cloned-uuid", "yellow", "Pseudo data from derived table"));
+            int index = 0;
+            foreach (CanvasExtended canvasExtended in expectedCanvasExtendedList)
+            {
+                Assert.AreEqual(expectedCanvasExtendedList[index], canvasExtended);
+                index++;
+            }
+
+            // Common Table Expression with Raw SQL Query
+            CommonTableExpression cte2 = new CommonTableExpression("select 'a' as col1", "c2");
+            sqlSelect = new SqlSelect("c2").WithCommonTableExpression(cte2);
+            Assert.AreEqual("a", sqlFacade.GetSingleResult<string>(sqlSelect));
+
+            CleanDB();
+        }
+
+        [Test]
         public void TestSelectFromDerivedTable()
         {
             CleanDB();
