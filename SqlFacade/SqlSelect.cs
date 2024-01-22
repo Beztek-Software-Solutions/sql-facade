@@ -9,7 +9,6 @@ namespace Beztek.Facade.Sql
     public class SqlSelect : ISql
     {
         public string SqlType { get; }
-        public string From { get; }
         public Table Table { get; set; }
         public DerivedTable FromDerivedTable { get; set; }
         public IList<CommonTableExpression> CommonTableExpressions { get; set; }
@@ -28,7 +27,7 @@ namespace Beztek.Facade.Sql
 
         public SqlSelect(string from) : this()
         {
-            this.From = from;
+            this.Table = new Table(from);
         }
 
         public SqlSelect(Table table) : this()

@@ -229,11 +229,7 @@ namespace Beztek.Facade.Sql
 
         private Query BuildSelectQuery(Query query, SqlSelect sqlSelect)
         {
-            if (sqlSelect.From != null)
-            {
-                query.From(sqlSelect.From);
-            }
-            else if (sqlSelect.Table != null)
+            if (sqlSelect.Table != null)
             {
                 query.From(sqlSelect.Table.Alias == null ? sqlSelect.Table.Name : sqlSelect.Table.Name + " as " + sqlSelect.Table.Alias);
             }
