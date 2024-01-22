@@ -302,13 +302,28 @@ namespace Beztek.Facade.Sql
                     }
 
                     // Set the join type
-                    if (Object.Equals(join.JoinType, JoinType.InnerJoin))
+                    if (join.JoinTable != null)
                     {
-                        query.Join(join.JoinTable.Alias == null ? join.JoinTable.Name : join.JoinTable.Name + " as " + join.JoinTable.Alias, j => sqlKataJoin);
+                        if (Object.Equals(join.JoinType, JoinType.InnerJoin))
+                        {
+                            query.Join(join.JoinTable.Alias == null ? join.JoinTable.Name : join.JoinTable.Name + " as " + join.JoinTable.Alias, j => sqlKataJoin);
+                        }
+                        else if (Object.Equals(join.JoinType, JoinType.LeftJoin))
+                        {
+                            query.LeftJoin(join.JoinTable.Alias == null ? join.JoinTable.Name : join.JoinTable.Name + " as " + join.JoinTable.Alias, j => sqlKataJoin);
+                        }
                     }
-                    else if (Object.Equals(join.JoinType, JoinType.LeftJoin))
+                    else
                     {
-                        query.LeftJoin(join.JoinTable.Alias == null ? join.JoinTable.Name : join.JoinTable.Name + " as " + join.JoinTable.Alias, j => sqlKataJoin);
+                        // Derived Table joins or Common Table Expression joins
+                        if (Object.Equals(join.JoinType, JoinType.InnerJoin))
+                        {
+                            query.Join(join.JoinCTE.Alias, j => sqlKataJoin);
+                        }
+                        else if (Object.Equals(join.JoinType, JoinType.LeftJoin))
+                        {
+                            query.LeftJoin(join.JoinCTE.Alias, j => sqlKataJoin);
+                        }
                     }
                 }
             }

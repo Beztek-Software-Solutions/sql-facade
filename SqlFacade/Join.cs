@@ -8,6 +8,7 @@ namespace Beztek.Facade.Sql
     {
         public JoinType JoinType { get; set; }
         public Table JoinTable { get; set; }
+        public DerivedTable JoinCTE { get; set; }
         public Expression OnExpression { get; set; }
         public List<Expression> JoinExpressions { get; set; }
 
@@ -17,6 +18,13 @@ namespace Beztek.Facade.Sql
         {
             this.JoinType = joinType == null ? JoinType.InnerJoin : joinType;
             this.JoinTable = joinTable;
+            this.OnExpression = onExpression;
+        }
+
+        public Join(DerivedTable joinCTE, Expression onExpression, JoinType joinType = null)
+        {
+            this.JoinType = joinType == null ? JoinType.InnerJoin : joinType;
+            this.JoinCTE = joinCTE;
             this.OnExpression = onExpression;
         }
 

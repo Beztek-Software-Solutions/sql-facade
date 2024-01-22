@@ -146,9 +146,12 @@ namespace Beztek.Facade.Sql.Test
             }
 
             // Common Table Expression with Raw SQL Query
-            CommonTableExpression cte2 = new CommonTableExpression("select 'a' as col1", "c2");
-            sqlSelect = new SqlSelect("c2").WithCommonTableExpression(cte2);
-            Assert.AreEqual("a", sqlFacade.GetSingleResult<string>(sqlSelect));
+            CommonTableExpression cte2 = new CommonTableExpression("select 'red' as col1", "c2");
+            sqlSelect = new SqlSelect("canvas")
+                    .WithField(new Field("color"))
+                    .WithCommonTableExpression(cte2)
+                    .WithJoin(new Join(cte2, new Expression("c2.col1", "canvas.color")));
+            Assert.AreEqual("red", sqlFacade.GetSingleResult<string>(sqlSelect));
 
             CleanDB();
         }
