@@ -18,7 +18,7 @@ namespace Beztek.Facade.Sql.Test
         public void InitializeClass()
         {
             // Create the tables for the tests
-            string stm1 = "CREATE TABLE canvas(id TEXT PRIMARY KEY, color TEXT)";
+            string stm1 = "CREATE TABLE canvas(id TEXT PRIMARY KEY, color TEXT, ordering INT)";
             string stm2 = "CREATE TABLE `canvas-metdata`(id TEXT PRIMARY KEY, extra_data TEXT, FOREIGN KEY (id) references canvas (id))";
 
             using (IDbConnection con = sqlFacade.GetSqlFacadeConfig().GetConnection())
@@ -49,11 +49,12 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             SqlInsert sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "123"))
-                .WithField(new Field("color", "green"));
+                .WithField(new Field("color", "green"))
+                .WithField(new Field("ordering", 888));
             int rowsChanged = sqlFacade.ExecuteSqlWrite(sqlInsert);
             Assert.AreEqual(1, rowsChanged);
             Assert.IsTrue(String.Equals(sqlInsert.ToString(), sqlFacade.DeserializeFromJson(sqlInsert.ToString()).ToString()));
-            Assert.AreEqual(CreateCanvas("123", "green"), SelectFromCanvasTable("123"));
+            Assert.AreEqual(CreateCanvas("123", "green", 888), SelectFromCanvasTable("123"));
             CleanDB();
         }
 
@@ -63,7 +64,8 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             SqlInsert sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "orig-uuid"))
-                .WithField(new Field("color", "red"));
+                .WithField(new Field("color", "red"))
+                .WithField(new Field("ordering", 999));
             int rowsChanged = sqlFacade.ExecuteSqlWrite(sqlInsert);
             Assert.AreEqual(1, rowsChanged);
 
@@ -71,11 +73,12 @@ namespace Beztek.Facade.Sql.Test
             SqlSelect sqlSelect = new SqlSelect("canvas")
                 .WithField(new Field("\'cloned-uuid\'", "id", true))
                 .WithField(new Field("color"))
+                .WithField(new Field("ordering"))
                 .WithWhere(new Filter().WithExpression(new Expression("id", "orig-uuid")));
             sqlInsert.WithQuery(sqlSelect);
             rowsChanged = sqlFacade.ExecuteSqlWrite(sqlInsert);
             Assert.AreEqual(1, rowsChanged);
-            Assert.AreEqual(CreateCanvas("cloned-uuid", "red"), SelectFromCanvasTable("cloned-uuid"));
+            Assert.AreEqual(CreateCanvas("cloned-uuid", "red", 999), SelectFromCanvasTable("cloned-uuid"));
             CleanDB();
         }
 
@@ -85,7 +88,8 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             SqlInsert sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "orig-uuid"))
-                .WithField(new Field("color", "red"));
+                .WithField(new Field("color", "red"))
+                .WithField(new Field("ordering", 777));
             int rowsChanged = sqlFacade.ExecuteSqlWrite(sqlInsert);
             Assert.AreEqual(1, rowsChanged);
 
@@ -95,7 +99,7 @@ namespace Beztek.Facade.Sql.Test
             rowsChanged = sqlFacade.ExecuteSqlWrite(sqlUpdate);
             Assert.AreEqual(1, rowsChanged);
             Assert.IsTrue(String.Equals(sqlUpdate.ToString(), sqlFacade.DeserializeFromJson(sqlUpdate.ToString()).ToString()));
-            Assert.AreEqual(CreateCanvas("orig-uuid", "yellow"), SelectFromCanvasTable("orig-uuid"));
+            Assert.AreEqual(CreateCanvas("orig-uuid", "yellow", 777), SelectFromCanvasTable("orig-uuid"));
             CleanDB();
         }
 
@@ -105,10 +109,11 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             SqlInsert sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "orig-uuid"))
-                .WithField(new Field("color", "red"));
+                .WithField(new Field("color", "red"))
+                .WithField(new Field("ordering", 666));
             int rowsChanged = sqlFacade.ExecuteSqlWrite(sqlInsert);
             Assert.AreEqual(1, rowsChanged);
-            Assert.AreEqual(CreateCanvas("orig-uuid", "red"), SelectFromCanvasTable("orig-uuid"));
+            Assert.AreEqual(CreateCanvas("orig-uuid", "red", 666), SelectFromCanvasTable("orig-uuid"));
 
             SqlDelete sqlDelete = new SqlDelete("canvas")
                 .WithFilter(new Expression("color", "red"));
@@ -131,7 +136,7 @@ namespace Beztek.Facade.Sql.Test
                 .WithField(new Field("color"))
                 .WithField(new Field("\'Pseudo data from derived table\'", "ExtraData", true));
             Assert.IsTrue(String.Equals(subSelect.ToString(), sqlFacade.DeserializeFromJson(subSelect.ToString()).ToString()));
-            CommonTableExpression cte1 = new CommonTableExpression(subSelect, "c1");    
+            CommonTableExpression cte1 = new CommonTableExpression(subSelect, "c1");
             SqlSelect sqlSelect = new SqlSelect("c1").WithCommonTableExpression(cte1);
             IList<CanvasExtended> canvasExtendedList = sqlFacade.GetResults<CanvasExtended>(sqlSelect);
             List<CanvasExtended> expectedCanvasExtendedList = new List<CanvasExtended>();
@@ -198,6 +203,7 @@ namespace Beztek.Facade.Sql.Test
             SqlSelect sqlSelect = new SqlSelect(new Table("canvas", "v"))
                 .WithField(new Field("v.id"))
                 .WithField(new Field("v.color"))
+                .WithField(new Field("v.ordering"))
                 .WithWhere(new Filter()
                     .WithExpression(new Expression("v.id", "uuid-211").WithRelation(Relation.GreaterThanOrEqualTo))
                     .WithExpression(new Expression("v.id", "uuid-910").WithRelation(Relation.GreaterThanOrEqualTo).WithLogicalRelation(LogicalRelation.AndNot)))
@@ -216,13 +222,78 @@ namespace Beztek.Facade.Sql.Test
             // Check max results per page
             Assert.AreEqual(30, pagedResultsWithTotal.PagedList.Count);
             // Check some arbitrary result which validates the sorting and retrieval
-            Assert.AreEqual(CreateCanvas("uuid-27", "color-27"), pagedResultsWithTotal.PagedList[4]);
+            Assert.AreEqual(CreateCanvas("uuid-27", "color-27", 31027), pagedResultsWithTotal.PagedList[4]);
             // Check the pagedResults for the last page
             int expectedNumInLastPage = totalCount - (totalPages - 1) * pagedResultsWithTotal.PageSize;
             PagedResults<Canvas> pagedResults = sqlFacade.GetPagedResults<Canvas>(sqlSelect, totalPages, pagedResultsWithTotal.PageSize);
             Assert.AreEqual(expectedNumInLastPage, pagedResults.PagedList.Count);
 
             CleanDB();
+        }
+
+        [Test]
+        public void TestInList()
+        {
+            CleanDB();
+            BatchWrite(1000);
+            
+            SqlSelect sqlSelect = new SqlSelect(new Table("canvas"))
+                .WithField(new Field("id"))
+                .WithField(new Field("color"))
+                .WithField(new Field("ordering"))
+                .WithSort(new Sort("id"));
+
+            Canvas canvas13 = CreateCanvas("uuid-13", "color-13", 31013);
+            Canvas canvas127 = CreateCanvas("uuid-127", "color-127", 31127);
+            Canvas canvas336 = CreateCanvas("uuid-336", "color-336", 31336);
+
+            sqlSelect.WithWhere(new Filter().WithExpression(new Expression("id", new string[] { "uuid-13", "uuid-336" })
+                                    .WithRelation(Relation.In)
+                                    .WithLogicalRelation(LogicalRelation.And)));
+            // serialize query and then deserialize it.
+            string jsonQuery = sqlSelect.ToString();
+            sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+                                    
+            IList<Canvas> results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.AreEqual(2, results.Count);
+            Assert.AreEqual(canvas13, results[0]);
+            Assert.AreEqual(canvas336, results[1]);
+
+            sqlSelect.WithWhere(new Filter().WithExpression(new Expression("id", new List<string> { "uuid-13", "uuid-336" })
+                                    .WithRelation(Relation.In)
+                                    .WithLogicalRelation(LogicalRelation.And)));
+            // serialize query and then deserialize it.
+            jsonQuery = sqlSelect.ToString();
+            sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+                                    
+            results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.AreEqual(2, results.Count);
+            Assert.AreEqual(canvas13, results[0]);
+            Assert.AreEqual(canvas336, results[1]);
+
+            sqlSelect.WithWhere(new Filter().WithExpression(new Expression("ordering", new int[] { 31013, 31336 })
+                                    .WithRelation(Relation.In)
+                                    .WithLogicalRelation(LogicalRelation.And)));
+            // serialize query and then deserialize it.
+            jsonQuery = sqlSelect.ToString();
+            sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+
+            results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.AreEqual(2, results.Count);
+            Assert.AreEqual(canvas13, results[0]);
+            Assert.AreEqual(canvas336, results[1]);
+
+            sqlSelect.WithWhere(new Filter().WithExpression(new Expression("ordering", new List<int> { 31013, 31336 })
+                                    .WithRelation(Relation.In)
+                                    .WithLogicalRelation(LogicalRelation.And)));
+            // serialize query and then deserialize it.
+            jsonQuery = sqlSelect.ToString();
+            sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+
+            results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.AreEqual(2, results.Count);
+            Assert.AreEqual(canvas13, results[0]);
+            Assert.AreEqual(canvas336, results[1]);
         }
 
         [Test]
@@ -234,11 +305,12 @@ namespace Beztek.Facade.Sql.Test
             SqlSelect sqlSelect = new SqlSelect(new Table("canvas"))
                 .WithField(new Field("id"))
                 .WithField(new Field("color"))
+                .WithField(new Field("ordering"))
                 .WithSort(new Sort("id"));
 
-            Canvas canvas13 = CreateCanvas("uuid-13", "color-13");
-            Canvas canvas127 = CreateCanvas("uuid-127", "color-127");
-            Canvas canvas336 = CreateCanvas("uuid-336", "color-336");
+            Canvas canvas13 = CreateCanvas("uuid-13", "color-13", 31013);
+            Canvas canvas127 = CreateCanvas("uuid-127", "color-127", 31127);
+            Canvas canvas336 = CreateCanvas("uuid-336", "color-336", 31336);
 
             // No filters - all results
             IList<Canvas> results = sqlFacade.GetResults<Canvas>(sqlSelect);
@@ -314,8 +386,8 @@ namespace Beztek.Facade.Sql.Test
                                             .WithLogicalRelation(logicalRelation)));
                     // serialize query and then deserialize it.
                     string jsonQuery = sqlSelect.ToString();
-                    sqlSelect = (SqlSelect) sqlFacade.DeserializeFromJson(jsonQuery);
-                    
+                    sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+
                     results = sqlFacade.GetResults<Canvas>(sqlSelect);
                     Assert.AreEqual(2, results.Count);
                     Assert.AreEqual(canvas13, results[0]);
@@ -560,13 +632,14 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             InsertThreeCanvases();
 
-            Canvas canvasGreen1 = CreateCanvas("123", "green");
-            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green");
-            Canvas canvasRed = CreateCanvas("another-uuid", "red");
+            Canvas canvasGreen1 = CreateCanvas("123", "green", 1);
+            Canvas canvasRed = CreateCanvas("another-uuid", "red", 2);
+            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green", 3);
 
             SqlSelect baseSqlSelect = new SqlSelect(new Table("canvas", "v"))
                 .WithField(new Field("v.id"))
-                .WithField(new Field("v.color"));
+                .WithField(new Field("v.color"))
+                .WithField(new Field("v.ordering"));
             // Combining with or clause
             baseSqlSelect.WithWhere(new Filter()
                     .WithExpression(new Expression("v.id", "another-uuid"))
@@ -586,13 +659,14 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             InsertThreeCanvases();
 
-            Canvas canvasGreen1 = CreateCanvas("123", "green");
-            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green");
-            Canvas canvasRed = CreateCanvas("another-uuid", "red");
+            Canvas canvasGreen1 = CreateCanvas("123", "green", 1);
+            Canvas canvasRed = CreateCanvas("another-uuid", "red", 2);
+            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green", 3);
 
             SqlSelect baseSqlSelect = new SqlSelect(new Table("canvas", "v"))
                 .WithField(new Field("v.id"))
-                .WithField(new Field("v.color"));
+                .WithField(new Field("v.color"))
+                .WithField(new Field("v.ordering"));
             // Combining two filters with or clause
             Filter filter1 = new Filter()
                     .WithExpression(new Expression("v.id", "another-uuid"))
@@ -613,9 +687,9 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             InsertThreeCanvases();
 
-            Canvas canvasGreen1 = CreateCanvas("123", "green");
-            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green");
-            Canvas canvasRed = CreateCanvas("another-uuid", "red");
+            Canvas canvasGreen1 = CreateCanvas("123", "green", 10);
+            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green", 111);
+            Canvas canvasRed = CreateCanvas("another-uuid", "red", 12);
 
             SqlSelect baseSqlSelect = new SqlSelect(new Table("canvas", "v"))
                 .WithField(new Field("v.id"))
@@ -642,13 +716,14 @@ namespace Beztek.Facade.Sql.Test
             CleanDB();
             InsertThreeCanvases();
 
-            Canvas canvasGreen1 = CreateCanvas("123", "green");
-            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green");
-            Canvas canvasRed = CreateCanvas("another-uuid", "red");
+            Canvas canvasGreen1 = CreateCanvas("123", "green", 1);
+            Canvas canvasRed = CreateCanvas("another-uuid", "red", 2);
+            Canvas canvasGreen2 = CreateCanvas("greencanvas", "green", 3);
 
             SqlSelect baseSqlSelect = new SqlSelect(new Table("canvas", "v"))
                 .WithField(new Field("v.id"))
-                .WithField(new Field("v.color"));
+                .WithField(new Field("v.color"))
+                .WithField(new Field("v.ordering"));
             Filter filter1 = new Filter()
                     .WithExpression(new Expression("v.id", "another-uuid"))
                     .WithExpression(new Expression("v.color", "green").WithLogicalRelation(LogicalRelation.Or));
@@ -787,23 +862,26 @@ namespace Beztek.Facade.Sql.Test
 
         // Utility Functions
 
-        private Canvas CreateCanvas(string uuid, string color)
+        private Canvas CreateCanvas(string uuid, string color, int ordering)
         {
-            Canvas canvas = new Canvas();
-            canvas.Id = uuid;
-            canvas.Color = color;
+            Canvas canvas = new() {
+                Id = uuid,
+                Color = color,
+                Ordering = ordering
+            };
             return canvas;
         }
         private CanvasExtended CreateCanvasExtended(string uuid, string color, string extraData = null)
         {
-            CanvasExtended canvasExtended = new CanvasExtended();
-            canvasExtended.Id = uuid;
-            canvasExtended.Color = color;
-            canvasExtended.ExtraData = extraData;
+            CanvasExtended canvasExtended = new() {
+                Id = uuid,
+                Color = color,
+                ExtraData = extraData
+            };
             return canvasExtended;
         }
 
-        private void CleanDB()
+        private static void CleanDB()
         {
             // Delete Extended canvas data
             SqlDelete sqlDelete = new SqlDelete("canvas-metdata");
@@ -814,47 +892,52 @@ namespace Beztek.Facade.Sql.Test
             rowsChanged = sqlFacade.ExecuteSqlWrite(sqlDelete);
         }
 
-        private Canvas SelectFromCanvasTable(string uuid)
+        private static Canvas SelectFromCanvasTable(string uuid)
         {
             SqlSelect sqlSelect = new SqlSelect("canvas")
                 .WithField(new Field("id"))
                 .WithField(new Field("color"))
+                .WithField(new Field("ordering"))
                 .WithWhere(new Filter().WithExpression(new Expression("id", uuid)));
             return sqlFacade.GetSingleResult<Canvas>(sqlSelect);
         }
 
-        private IList<int> BatchWrite(int numCanvases)
+        private static IList<int> BatchWrite(int numCanvases)
         {
             List<ISqlWrite> sqlInserts = new List<ISqlWrite>();
             for (int index = 0; index < numCanvases; index++)
             {
                 SqlInsert sqlInsert = new SqlInsert("canvas")
                     .WithField(new Field("id", $"uuid-{index.ToString()}"))
-                    .WithField(new Field("color", $"color-{index.ToString()}"));
+                    .WithField(new Field("color", $"color-{index.ToString()}"))
+                    .WithField(new Field("ordering", index + 31000));
                 sqlInserts.Add(sqlInsert);
             }
             return sqlFacade.ExecuteMultiSqlWrite(sqlInserts);
         }
 
-        private IList<int> InsertThreeCanvases()
+        private static IList<int> InsertThreeCanvases()
         {
             List<ISqlWrite> sqlInserts = new List<ISqlWrite>();
             SqlInsert sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "123"))
-                .WithField(new Field("color", "green"));
+                .WithField(new Field("color", "green"))
+                .WithField(new Field("ordering", "1"));
             sqlInserts.Add(sqlInsert);
             sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "another-uuid"))
-                .WithField(new Field("color", "red"));
+                .WithField(new Field("color", "red"))
+                .WithField(new Field("ordering", "2"));
             sqlInserts.Add(sqlInsert);
             sqlInsert = new SqlInsert("canvas")
                 .WithField(new Field("id", "greencanvas"))
-                .WithField(new Field("color", "green"));
+                .WithField(new Field("color", "green"))
+                .WithField(new Field("ordering", "3"));
             sqlInserts.Add(sqlInsert);
             return sqlFacade.ExecuteMultiSqlWrite(sqlInserts);
         }
 
-        private Filter GetBaseFilter(bool isAnd, bool isFirst)
+        private static Filter GetBaseFilter(bool isAnd, bool isFirst)
         {
             return isFirst ? new Filter() : new Filter().WithExpression(new Expression(isAnd ? "1=1" : "1=2", null).WithIsRaw());
         }

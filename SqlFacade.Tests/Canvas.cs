@@ -9,6 +9,7 @@ namespace Beztek.Facade.Sql.Test
     {
         public string Id { get; set; }
         public string Color { get; set; }
+        public int Ordering { get; set; }
 
         public override string ToString()
         {
@@ -22,12 +23,12 @@ namespace Beztek.Facade.Sql.Test
             if (obj == null || !(obj is Canvas))
                 return false;
             else
-                return string.Equals(Id, ((Canvas)obj).Id) && String.Equals(Color, ((Canvas)obj).Color);
+                return string.Equals(Id, ((Canvas)obj).Id) && String.Equals(Color, ((Canvas)obj).Color) && String.Equals(Ordering, ((Canvas)obj).Ordering);
         }
 
         public override int GetHashCode()
         {
-            return Id.GetHashCode() ^ Color.GetHashCode();
+            return Id.GetHashCode() ^ Color.GetHashCode() ^ Ordering.GetHashCode();
         }
     }
 }
