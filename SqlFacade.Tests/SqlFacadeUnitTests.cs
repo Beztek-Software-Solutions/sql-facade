@@ -5,6 +5,7 @@ namespace Beztek.Facade.Sql.Test
     using System;
     using System.Collections.Generic;
     using System.Data;
+    using System.Linq;
     using Beztek.Facade.Sql;
     using Microsoft.Data.Sqlite;
     using NUnit.Framework;
@@ -157,6 +158,42 @@ namespace Beztek.Facade.Sql.Test
                     .WithCommonTableExpression(cte2)
                     .WithJoin(new Join(cte2, new Expression("c2.col1", "canvas.color")));
             Assert.AreEqual("red", sqlFacade.GetSingleResult<string>(sqlSelect));
+
+            CleanDB();
+        }
+
+        [Test]
+        public void TestNestedCommonTableExpressions()
+        {
+            CleanDB();
+            InsertThreeCanvases();
+
+            CommonTableExpression cte1 = new CommonTableExpression("select '123' as id, 'c1v1' as v1 union all select 'another-uuid' as id, 'c1v2' as v1", "c1");
+            CommonTableExpression cte2 = new CommonTableExpression("select '123' as id, 'c2v1' as v2 union all select 'another-uuid' as id, 'c2v2' as v2", "c2");
+            CommonTableExpression cte3 = new CommonTableExpression("select '123' as id, 'c3v1' as v3 union all select 'another-uuid' as id, 'c3v2' as v3", "c3");
+            SqlSelect sqlSelect = new SqlSelect("canvas")
+                .WithCommonTableExpression(cte1)
+                .WithCommonTableExpression(cte2)
+                .WithCommonTableExpression(cte3)
+                .WithField(new Field("canvas.id", "id"))
+                .WithField(new Field("c1.v1", "v1"))
+                .WithField(new Field("c2.v2", "v2"))
+                .WithField(new Field("c3.v3", "v3"))
+                .WithJoin(new Join(cte1, new Expression("c1.id", "canvas.id")))
+                .WithJoin(new Join(cte2, new Expression("c2.id", "canvas.id")))
+                .WithJoin(new Join(cte3, new Expression("c3.id", "canvas.id")));
+
+            List<object> var = sqlFacade.GetResults<object>(sqlSelect).ToList();
+            Assert.AreEqual(2, var.Count);
+
+            SqlSelect nestedCteSelect = new SqlSelect(new CommonTableExpression(sqlSelect, "agg"))
+                .WithField(new Field("count(*)","num", true));
+            // Check that the three nested CTEs bubble up to the nestedSqlSelect
+            Assert.AreEqual(3, nestedCteSelect.CommonTableExpressions.Count);
+
+            // Check that the count from the nested select matches the original select
+            int count = sqlFacade.GetSingleResult<int>(nestedCteSelect);
+            Assert.AreEqual(var.Count, count);
 
             CleanDB();
         }

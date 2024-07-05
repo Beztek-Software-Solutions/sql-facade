@@ -193,13 +193,10 @@ namespace Beztek.Facade.Sql
         {
             SqlSelect sqlSelect = (SqlSelect)parameters[0];
 
-            // Clone the input SqlSelect so that it can be used by the caller
-            SqlSelect sqlSelectForCount = (SqlSelect)DeserializeFromJson(sqlSelect.ToString());
-            // Reset these parameters
-            sqlSelectForCount.Fields = null;
-            sqlSelectForCount.Sorts = null;
-            // Add count Field
-            sqlSelectForCount.WithField(new Field("count(*)", "Total", true));
+            // Create a new query to get the count
+            SqlSelect sqlSelectForCount = new SqlSelect(new CommonTableExpression(sqlSelect, "cte"))
+                .WithField(new Field("count(*)", "Total", true));
+
             Query query = (XQuery)qFactory.Factory.Query();
             BuildQuery(query, sqlSelectForCount);
             String rawQuery = qFactory.Factory.Compiler.Compile(query).ToString();

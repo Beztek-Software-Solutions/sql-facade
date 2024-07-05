@@ -2,6 +2,7 @@
 
 namespace Beztek.Facade.Sql
 {
+    using System;
     using System.Collections.Generic;
     using System.Text.Json;
     using System.Text.Json.Serialization;
@@ -43,6 +44,13 @@ namespace Beztek.Facade.Sql
         public SqlSelect(CommonTableExpression fromCTE) : this()
         {
             FromDerivedTable = fromCTE;
+            if (fromCTE.Select != null && fromCTE.Select.CommonTableExpressions != null)
+            {
+                foreach (var cte in fromCTE.Select.CommonTableExpressions)
+                {
+                    this.WithCommonTableExpression(cte);
+                }
+            }
         }
 
         public SqlSelect WithCommonTableExpression(CommonTableExpression commonTableExpression)

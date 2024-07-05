@@ -1,5 +1,7 @@
 // Copyright (c) Beztek Software Solutions. All rights reserved.
 
+using System.Collections.Generic;
+
 namespace Beztek.Facade.Sql
 {
     public class CommonTableExpression : DerivedTable
