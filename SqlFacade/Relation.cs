@@ -9,6 +9,8 @@ namespace Beztek.Facade.Sql
         public static readonly Relation EqualTo = new Relation("=");
         public static readonly Relation GreaterThan = new Relation(">");
         public static readonly Relation GreaterThanOrEqualTo = new Relation(">=");
+        public static readonly Relation LessThan = new Relation("<");
+        public static readonly Relation LessThanOrEqualTo = new Relation("<=");
         public static readonly Relation In = new Relation("In");
         public static readonly Relation NullValue = new Relation("NullValue");
         public static readonly Relation TrueValue = new Relation("TrueValue");

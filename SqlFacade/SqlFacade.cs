@@ -490,7 +490,7 @@ namespace Beztek.Facade.Sql
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, "<", expression.Value);
+                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.GreaterThanOrEqualTo))
@@ -501,7 +501,29 @@ namespace Beztek.Facade.Sql
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, "<=", expression.Value);
+                            query.Where(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                        }
+                    }
+                    else if (Object.Equals(expression.Relation, Relation.LessThan))
+                    {
+                        if (Object.Equals(logicalRelation, LogicalRelation.And))
+                        {
+                            query.Where(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                        }
+                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+                        {
+                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), expression.Value);
+                        }
+                    }
+                    else if (Object.Equals(expression.Relation, Relation.LessThanOrEqualTo))
+                    {
+                        if (Object.Equals(logicalRelation, LogicalRelation.And))
+                        {
+                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
+                        }
+                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+                        {
+                            query.Where(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.In) && expression.Value.GetType() == typeof(SqlSelect))
@@ -683,7 +705,7 @@ namespace Beztek.Facade.Sql
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, "<", expression.Value);
+                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.GreaterThanOrEqualTo))
@@ -694,7 +716,29 @@ namespace Beztek.Facade.Sql
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, "<=", expression.Value);
+                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                        }
+                    }
+                    else if (Object.Equals(expression.Relation, Relation.LessThan))
+                    {
+                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
+                        {
+                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                        }
+                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
+                        {
+                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), expression.Value);
+                        }
+                    }
+                    else if (Object.Equals(expression.Relation, Relation.LessThanOrEqualTo))
+                    {
+                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
+                        {
+                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
+                        }
+                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
+                        {
+                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.In) && expression.Value.GetType() == typeof(SqlSelect))

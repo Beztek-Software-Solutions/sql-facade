@@ -243,7 +243,7 @@ namespace Beztek.Facade.Sql.Test
                 .WithField(new Field("v.ordering"))
                 .WithWhere(new Filter()
                     .WithExpression(new Expression("v.id", "uuid-211").WithRelation(Relation.GreaterThanOrEqualTo))
-                    .WithExpression(new Expression("v.id", "uuid-910").WithRelation(Relation.GreaterThanOrEqualTo).WithLogicalRelation(LogicalRelation.AndNot)))
+                    .WithExpression(new Expression("v.id", "uuid-910").WithRelation(Relation.LessThan)))
                 .WithSort(new Sort("v.id"))
                 .WithSort(new Sort("v.color", false));
             int pageNumber = 3;
@@ -386,10 +386,28 @@ namespace Beztek.Facade.Sql.Test
                 Assert.AreEqual(753, results.Count);
                 Assert.AreEqual(canvas336, results[17]);
 
+                // Greater Than with Negation
+                sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
+                                        .WithExpression(new Expression("id", "uuid-32")
+                                        .WithRelation(Relation.LessThanOrEqualTo)
+                                        .WithLogicalRelation(negationRelation)));
+                results = sqlFacade.GetResults<Canvas>(sqlSelect);
+                Assert.AreEqual(753, results.Count);
+                Assert.AreEqual(canvas336, results[17]);
+
                 // Lesser Than
                 sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
                                         .WithExpression(new Expression("id", "uuid-32")
-                                        .WithRelation(Relation.GreaterThan)
+                                        .WithRelation(Relation.LessThan)
+                                        .WithLogicalRelation(logicalRelation)));
+                results = sqlFacade.GetResults<Canvas>(sqlSelect);
+                Assert.AreEqual(246, results.Count);
+                Assert.AreEqual(canvas13, results[35]);
+
+                // Lesser Than with Negation
+                sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
+                                        .WithExpression(new Expression("id", "uuid-32")
+                                        .WithRelation(Relation.GreaterThanOrEqualTo)
                                         .WithLogicalRelation(negationRelation)));
                 results = sqlFacade.GetResults<Canvas>(sqlSelect);
                 Assert.AreEqual(246, results.Count);
@@ -404,10 +422,28 @@ namespace Beztek.Facade.Sql.Test
                 Assert.AreEqual(754, results.Count);
                 Assert.AreEqual(canvas336, results[18]);
 
+                // Greater Than or Equal To with negation
+                sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
+                                        .WithExpression(new Expression("id", "uuid-32")
+                                        .WithRelation(Relation.LessThan)
+                                        .WithLogicalRelation(negationRelation)));
+                results = sqlFacade.GetResults<Canvas>(sqlSelect);
+                Assert.AreEqual(754, results.Count);
+                Assert.AreEqual(canvas336, results[18]);
+
                 // Lesser Than or Equal To
                 sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
                                         .WithExpression(new Expression("id", "uuid-32")
-                                        .WithRelation(Relation.GreaterThanOrEqualTo)
+                                        .WithRelation(Relation.LessThanOrEqualTo)
+                                        .WithLogicalRelation(logicalRelation)));
+                results = sqlFacade.GetResults<Canvas>(sqlSelect);
+                Assert.AreEqual(247, results.Count);
+                Assert.AreEqual(canvas13, results[35]);
+
+                // Lesser Than or Equal To with negation
+                sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)
+                                        .WithExpression(new Expression("id", "uuid-32")
+                                        .WithRelation(Relation.GreaterThan)
                                         .WithLogicalRelation(negationRelation)));
                 results = sqlFacade.GetResults<Canvas>(sqlSelect);
                 Assert.AreEqual(247, results.Count);

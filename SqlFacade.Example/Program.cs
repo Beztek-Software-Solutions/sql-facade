@@ -184,7 +184,7 @@ namespace Beztek.Facade.Sql.Example
                 .WithField(new Field("v.color"))
                 .WithWhere(new Filter()
                     .WithExpression(new Expression("v.id", "uuid-211").WithRelation(Relation.GreaterThanOrEqualTo))
-                    .WithExpression(new Expression("v.id", "uuid-910").WithRelation(Relation.GreaterThanOrEqualTo).WithLogicalRelation(LogicalRelation.AndNot)))
+                    .WithExpression(new Expression("v.id", "uuid-910").WithRelation(Relation.LessThan)))
                 .WithSort(new Sort("v.id"))
                 .WithSort(new Sort("v.color", false));
             int pageNum = 2;
