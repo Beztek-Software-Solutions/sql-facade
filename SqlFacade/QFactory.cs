@@ -3,7 +3,7 @@
 namespace Beztek.Facade.Sql
 {
     using System;
-    using System.Collections.Generic;
+    using System.Collections.Concurrent;
     using System.Data;
     using SqlKata.Compilers;
     using SqlKata.Execution;
@@ -12,14 +12,14 @@ namespace Beztek.Facade.Sql
     {
         internal QueryFactory Factory { get; set; }
 
-        internal DbType dbType { get; set; }
+        internal DbType DbType { get; set; }
 
-        private static Dictionary<DbType, Compiler> compilers = new Dictionary<DbType, Compiler>();
+        private static ConcurrentDictionary<DbType, Compiler> _compilers = new();
 
         internal QFactory(SqlFacadeConfig config)
         {
-            this.dbType = config.DbType;
-            Compiler compiler = GetCompiler(dbType);
+            this.DbType = config.DbType;
+            Compiler compiler = GetCompiler(DbType);
             Factory = new QueryFactory(config.GetConnection(), compiler);
         }
 
@@ -38,26 +38,14 @@ namespace Beztek.Facade.Sql
 
         public static Compiler GetCompiler(DbType dbType)
         {
-            Compiler compiler = null;
-            if (!compilers.TryGetValue(dbType, out compiler))
-            {
-                if (dbType == DbType.POSTGRES)
-                {
-                    compiler = new PostgresCompiler();
-                    compilers.Add(dbType, compiler);
-                }
-                else if (dbType == DbType.SQLSERVER)
-                {
-                    compiler = new SqlServerCompiler();
-                    compilers.Add(dbType, compiler);
-                }
-                else if (dbType == DbType.SQLITE)
-                {
-                    compiler = new SqliteCompiler();
-                    compilers.Add(dbType, compiler);
-                }
-            }
-            return compiler;
+            return _compilers.GetOrAdd(dbType, _ => {
+                return dbType switch {
+                    DbType.POSTGRES => new PostgresCompiler(),
+                    DbType.SQLSERVER => new SqlServerCompiler(),
+                    DbType.SQLITE => new SqliteCompiler(),
+                    _ => null
+                };
+            });
         }
     }
 }
