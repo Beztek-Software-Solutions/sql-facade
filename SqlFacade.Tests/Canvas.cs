@@ -4,6 +4,7 @@ namespace Beztek.Facade.Sql.Test
 {
     using System;
     using System.Text.Json;
+    using System.Text.Json.Serialization;
 
     public class Canvas
     {
@@ -13,8 +14,9 @@ namespace Beztek.Facade.Sql.Test
 
         public override string ToString()
         {
-            JsonSerializerOptions options = new JsonSerializerOptions();
-            options.IgnoreNullValues = true;
+            JsonSerializerOptions options = new JsonSerializerOptions {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
             return JsonSerializer.Serialize(this, options);
         }
 
