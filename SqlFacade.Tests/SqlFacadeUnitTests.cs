@@ -580,7 +580,7 @@ namespace Beztek.Facade.Sql.Test
                                                 .WithSqlIn("id", subQuery)
                                                 .WithLogicalRelation(negationRelation)));
                 results = sqlFacade.GetResults<Canvas>(currQuery);
-                Assert.That(((!isAnd) && (!isFirst) ? 999 : 1000), Is.EqualTo(results.Count));
+                Assert.That(999, Is.EqualTo(results.Count));
 
                 // Starts With
                 sqlSelect.WithWhere(GetBaseFilter(isAnd, isFirst)

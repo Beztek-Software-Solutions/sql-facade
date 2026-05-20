@@ -431,6 +431,175 @@ namespace Beztek.Facade.Sql
             return query;
         }
 
+        private enum InClauseMode
+        {
+            And,
+            AndNot,
+            Or,
+            OrNot
+        }
+
+        private static InClauseMode GetInClauseMode(LogicalRelation logicalRelation)
+        {
+            if (Object.Equals(logicalRelation, LogicalRelation.And))
+            {
+                return InClauseMode.And;
+            }
+            if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+            {
+                return InClauseMode.AndNot;
+            }
+            if (Object.Equals(logicalRelation, LogicalRelation.Or))
+            {
+                return InClauseMode.Or;
+            }
+            if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
+            {
+                return InClauseMode.OrNot;
+            }
+
+            throw new ArgumentException($"Unsupported logical relation {logicalRelation} for In expression");
+        }
+
+        private static Type GetEnumerableElementType(Type type)
+        {
+            if (type.IsArray)
+            {
+                return type.GetElementType();
+            }
+
+            foreach (Type iface in type.GetInterfaces())
+            {
+                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return iface.GetGenericArguments()[0];
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsStringJsonArray(JsonElement jsonElement)
+        {
+            foreach (JsonElement item in jsonElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void ApplyInSubquery<Q>(BaseQuery<Q> query, string column, SqlSelect sqlSelect, InClauseMode mode) where Q : BaseQuery<Q>
+        {
+            Query subQuery = BuildSelectQuery(new Query(), sqlSelect);
+            switch (mode)
+            {
+                case InClauseMode.And:
+                    query.WhereIn(column, subQuery);
+                    break;
+                case InClauseMode.AndNot:
+                    query.WhereNotIn(column, subQuery);
+                    break;
+                case InClauseMode.Or:
+                    query.OrWhereIn(column, subQuery);
+                    break;
+                case InClauseMode.OrNot:
+                    query.OrWhereNotIn(column, subQuery);
+                    break;
+            }
+        }
+
+        private void ApplyInValues<Q, T>(BaseQuery<Q> query, string column, IEnumerable<T> values, InClauseMode mode) where Q : BaseQuery<Q>
+        {
+            switch (mode)
+            {
+                case InClauseMode.And:
+                    query.WhereIn(column, values);
+                    break;
+                case InClauseMode.AndNot:
+                    query.WhereNotIn(column, values);
+                    break;
+                case InClauseMode.Or:
+                    query.OrWhereIn(column, values);
+                    break;
+                case InClauseMode.OrNot:
+                    query.OrWhereNotIn(column, values);
+                    break;
+            }
+        }
+
+        private void ApplyInExpression<Q>(BaseQuery<Q> query, Expression expression, InClauseMode mode) where Q : BaseQuery<Q>
+        {
+            object value = expression.Value;
+            string column = expression.Name;
+
+            if (value is SqlSelect sqlSelect)
+            {
+                ApplyInSubquery(query, column, sqlSelect, mode);
+                return;
+            }
+
+            if (value is JsonElement jsonElement)
+            {
+                if (jsonElement.ValueKind == JsonValueKind.Object)
+                {
+                    ApplyInSubquery(query, column, JsonSerializer.Deserialize<SqlSelect>(jsonElement.GetRawText()), mode);
+                    return;
+                }
+
+                if (jsonElement.ValueKind == JsonValueKind.Array)
+                {
+                    string json = jsonElement.GetRawText();
+                    if (IsStringJsonArray(jsonElement))
+                    {
+                        ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<string>>(json), mode);
+                    }
+                    else
+                    {
+                        ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<double>>(json), mode);
+                    }
+
+                    return;
+                }
+
+                throw new ArgumentException($"Unsupported JsonElement value kind {jsonElement.ValueKind} for In expression");
+            }
+
+            Type elementType = GetEnumerableElementType(value.GetType());
+            if (elementType == null)
+            {
+                throw new ArgumentException($"Unsupported In list value type {value.GetType()}");
+            }
+
+            if (elementType == typeof(string))
+            {
+                ApplyInValues(query, column, (IEnumerable<string>)value, mode);
+            }
+            else if (elementType == typeof(int))
+            {
+                ApplyInValues(query, column, (IEnumerable<int>)value, mode);
+            }
+            else if (elementType == typeof(long))
+            {
+                ApplyInValues(query, column, (IEnumerable<long>)value, mode);
+            }
+            else if (elementType == typeof(float))
+            {
+                ApplyInValues(query, column, (IEnumerable<float>)value, mode);
+            }
+            else if (elementType == typeof(double))
+            {
+                ApplyInValues(query, column, (IEnumerable<double>)value, mode);
+            }
+            else
+            {
+                throw new ArgumentException($"Unsupported In list element type {elementType}");
+            }
+        }
+
         private void AddExpression<Q>(BaseQuery<Q> query, bool isFirst, Expression expression) where Q : BaseQuery<Q>
         {
             LogicalRelation logicalRelation = expression.LogicalRelation;
@@ -526,76 +695,9 @@ namespace Beztek.Facade.Sql
                             query.Where(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
                         }
                     }
-                    else if (Object.Equals(expression.Relation, Relation.In) && expression.Value.GetType() == typeof(SqlSelect))
-                    {
-                        SqlSelect sqlInCheck = (SqlSelect)expression.Value;
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereIn(expression.Name, BuildSelectQuery(new Query(), sqlInCheck));
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.In) && expression.Value is JsonElement)
-                    {
-                        // Ugly hack to see if we need to deserialize to a string or a number
-                        if (expression.Value.ToString().Contains('"'))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.And))
-                            {
-                                query.WhereIn<string>(expression.Name, JsonSerializer.Deserialize<IEnumerable<string>>(expression.Value.ToString()));
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                            {
-                                query.WhereNotIn<string>(expression.Name, JsonSerializer.Deserialize<IEnumerable<string>>(expression.Value.ToString()));
-                            }
-                        }
-                        else
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.And))
-                            {
-                                query.WhereIn<double>(expression.Name, JsonSerializer.Deserialize<IEnumerable<double>>(expression.Value.ToString()));
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                            {
-                                query.WhereNotIn<double>(expression.Name, JsonSerializer.Deserialize<IEnumerable<double>>(expression.Value.ToString()));
-                            }
-                        }
-                    }
                     else if (Object.Equals(expression.Relation, Relation.In))
                     {
-                        Type type = expression.Value.GetType();
-                        if (type == typeof(string[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.And))
-                            {
-                                query.WhereIn<string>(expression.Name, (IEnumerable<string>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                            {
-                                query.WhereNotIn<string>(expression.Name, (IEnumerable<string>)expression.Value);
-                            }
-                        }
-                        else if (type == typeof(int[]) || type == typeof(long[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.And))
-                            {
-                                query.WhereIn<int>(expression.Name, (IEnumerable<int>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                            {
-                                query.WhereNotIn<int>(expression.Name, (IEnumerable<int>)expression.Value);
-                            }
-                        }
-                        else if (type == typeof(float[]) || type == typeof(double[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.And))
-                            {
-                                query.WhereIn<float>(expression.Name, (IEnumerable<float>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                            {
-                                query.WhereNotIn<float>(expression.Name, (IEnumerable<float>)expression.Value);
-                            }
-                        }
+                        ApplyInExpression(query, expression, GetInClauseMode(logicalRelation));
                     }
                     else if (Object.Equals(expression.Relation, Relation.StartsWith))
                     {
@@ -741,116 +843,9 @@ namespace Beztek.Facade.Sql
                             query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
                         }
                     }
-                    else if (Object.Equals(expression.Relation, Relation.In) && expression.Value.GetType() == typeof(SqlSelect))
-                    {
-                        SqlSelect sqlInCheck = (SqlSelect)expression.Value;
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereIn(expression.Name, BuildSelectQuery(new Query(), sqlInCheck));
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNotIn(expression.Name, BuildSelectQuery(new Query(), sqlInCheck));
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.In) && expression.Value is JsonElement)
-                    {
-                        // Ugly hack to see if we need to deserialize to a string or a number
-                        if (expression.Value.ToString().Contains('"'))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                            {
-                                query.WhereIn<string>(expression.Name, JsonSerializer.Deserialize<IEnumerable<string>>(expression.Value.ToString()));
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                            {
-                                query.WhereNotIn<string>(expression.Name, JsonSerializer.Deserialize<IEnumerable<string>>(expression.Value.ToString()));
-                            }
-                        }
-                        else
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                            {
-                                query.WhereIn<double>(expression.Name, JsonSerializer.Deserialize<IEnumerable<double>>(expression.Value.ToString()));
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                            {
-                                query.WhereNotIn<double>(expression.Name, JsonSerializer.Deserialize<IEnumerable<double>>(expression.Value.ToString()));
-                            }
-                        }
-                    }
                     else if (Object.Equals(expression.Relation, Relation.In))
                     {
-                        Type type = ((IEnumerable<object>)expression.Value).GetType().GetGenericArguments()[0];
-                        if (type == typeof(string[]))
-                        {
-                            try
-                            {
-                                if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                                {
-                                    query.WhereIn<string>(expression.Name, (IEnumerable<string>)expression.Value);
-                                }
-                                else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                                {
-                                    query.WhereNotIn<string>(expression.Name, (IEnumerable<string>)expression.Value);
-                                }
-                            }
-                            catch (Exception)
-                            {
-                                if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                                {
-                                    query.WhereIn<double>(expression.Name, (IEnumerable<double>)expression.Value);
-                                }
-                                else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                                {
-                                    query.WhereNotIn<double>(expression.Name, (IEnumerable<double>)expression.Value);
-                                }
-                            }
-                        }
-                        else if (type == typeof(int[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                            {
-                                query.WhereIn<int>(expression.Name, (IEnumerable<int>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                            {
-                                query.WhereNotIn<int>(expression.Name, (IEnumerable<int>)expression.Value);
-                            }
-                        }
-                        else if (type == typeof(long[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                            {
-                                query.WhereIn<long>(expression.Name, (IEnumerable<long>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                            {
-                                query.WhereNotIn<long>(expression.Name, (IEnumerable<long>)expression.Value);
-                            }
-                        }
-                        else if (type == typeof(float[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                            {
-                                query.WhereIn<float>(expression.Name, (IEnumerable<float>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                            {
-                                query.WhereNotIn<float>(expression.Name, (IEnumerable<float>)expression.Value);
-                            }
-                        }
-                        else if (type == typeof(double[]))
-                        {
-                            if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                            {
-                                query.WhereIn<double>(expression.Name, (IEnumerable<double>)expression.Value);
-                            }
-                            else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                            {
-                                query.WhereNotIn<double>(expression.Name, (IEnumerable<double>)expression.Value);
-                            }
-                        }
+                        ApplyInExpression(query, expression, GetInClauseMode(logicalRelation));
                     }
                     else if (Object.Equals(expression.Relation, Relation.StartsWith))
                     {
