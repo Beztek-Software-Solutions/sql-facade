@@ -334,6 +334,51 @@ namespace Beztek.Facade.Sql.Test
         }
 
         [Test]
+        public void TestDeserializeScalarFilters()
+        {
+            CleanDB();
+            BatchWrite(1000);
+
+            Canvas canvas13 = CreateCanvas("uuid-13", "color-13", 31013);
+
+            SqlSelect sqlSelect = new SqlSelect(new Table("canvas"))
+                .WithField(new Field("id"))
+                .WithField(new Field("color"))
+                .WithField(new Field("ordering"))
+                .WithWhere(new Filter().WithExpression(new Expression("id", "uuid-13")));
+            string jsonQuery = sqlSelect.ToString();
+            sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+
+            IList<Canvas> results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.That(1, Is.EqualTo(results.Count));
+            Assert.That(canvas13, Is.EqualTo(results[0]));
+
+            SqlSelect subQuery = new SqlSelect("canvas").WithField(new Field("id"))
+                .WithWhere(new Filter().WithExpression(new Expression("color", "color-13")));
+            sqlSelect = new SqlSelect(new Table("canvas"))
+                .WithField(new Field("id"))
+                .WithField(new Field("color"))
+                .WithField(new Field("ordering"))
+                .WithWhere(new Filter().WithExpression(new Expression().WithSqlIn("id", subQuery)));
+            jsonQuery = sqlSelect.ToString();
+            sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
+
+            results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.That(1, Is.EqualTo(results.Count));
+            Assert.That(canvas13, Is.EqualTo(results[0]));
+
+            SqlInsert sqlInsert = new SqlInsert("canvas")
+                .WithField(new Field("id", "json-scalar-test"))
+                .WithField(new Field("color", "purple"))
+                .WithField(new Field("ordering", 4242));
+            sqlInsert = (SqlInsert)sqlFacade.DeserializeFromJson(sqlInsert.ToString());
+            Assert.That(1, Is.EqualTo(sqlFacade.ExecuteSqlWrite(sqlInsert)));
+            Assert.That(CreateCanvas("json-scalar-test", "purple", 4242), Is.EqualTo(SelectFromCanvasTable("json-scalar-test")));
+
+            CleanDB();
+        }
+
+        [Test]
         public void TestRelation()
         {
             CleanDB();

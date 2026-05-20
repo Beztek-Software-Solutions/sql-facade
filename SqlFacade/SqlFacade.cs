@@ -283,7 +283,7 @@ namespace Beztek.Facade.Sql
                 foreach (Join join in sqlSelect.Joins)
                 {
                     SqlKata.Join sqlKataJoin = new SqlKata.Join();
-                    sqlKataJoin.On(join.OnExpression.Name, join.OnExpression.Value.ToString(), join.OnExpression.Relation.ToString());
+                    sqlKataJoin.On(join.OnExpression.Name, UnwrapJsonValue(join.OnExpression.Value)?.ToString(), join.OnExpression.Relation.ToString());
                     if (join.JoinExpressions != null)
                     {
                         bool isFirst = true;
@@ -429,6 +429,63 @@ namespace Beztek.Facade.Sql
             }
 
             return query;
+        }
+
+        private static object UnwrapJsonValue(object value)
+        {
+            if (value == null || value is not JsonElement jsonElement)
+            {
+                return value;
+            }
+
+            switch (jsonElement.ValueKind)
+            {
+                case JsonValueKind.Null:
+                    return null;
+                case JsonValueKind.String:
+                    return jsonElement.GetString();
+                case JsonValueKind.True:
+                    return true;
+                case JsonValueKind.False:
+                    return false;
+                case JsonValueKind.Number:
+                    if (jsonElement.TryGetInt32(out int intValue))
+                    {
+                        return intValue;
+                    }
+                    if (jsonElement.TryGetInt64(out long longValue))
+                    {
+                        return longValue;
+                    }
+                    return jsonElement.GetDouble();
+                default:
+                    return value;
+            }
+        }
+
+        private static object ResolveExpressionValue(Expression expression)
+        {
+            if (expression.Value is not JsonElement jsonElement)
+            {
+                return expression.Value;
+            }
+
+            if (Object.Equals(expression.Relation, Relation.In))
+            {
+                return expression.Value;
+            }
+
+            if (Object.Equals(expression.Relation, Relation.Exists) && jsonElement.ValueKind == JsonValueKind.Object)
+            {
+                return JsonSerializer.Deserialize<SqlSelect>(jsonElement.GetRawText());
+            }
+
+            if (expression.IsRaw && jsonElement.ValueKind == JsonValueKind.Array)
+            {
+                return JsonSerializer.Deserialize<object[]>(jsonElement.GetRawText());
+            }
+
+            return UnwrapJsonValue(jsonElement);
         }
 
         private enum InClauseMode
@@ -602,6 +659,7 @@ namespace Beztek.Facade.Sql
 
         private void AddExpression<Q>(BaseQuery<Q> query, bool isFirst, Expression expression) where Q : BaseQuery<Q>
         {
+            object value = ResolveExpressionValue(expression);
             LogicalRelation logicalRelation = expression.LogicalRelation;
             if (isFirst)
             {
@@ -624,14 +682,7 @@ namespace Beztek.Facade.Sql
                 {
                     if (Object.Equals(logicalRelation, LogicalRelation.And))
                     {
-                        if (expression.Value is JsonElement)
-                        {
-                            query.WhereRaw(expression.Name, JsonSerializer.Deserialize<object[]>(expression.Value.ToString()));
-                        }
-                        else
-                        {
-                            query.WhereRaw(expression.Name, (object[])expression.Value);
-                        }
+                        query.WhereRaw(expression.Name, (object[])value);
                     }
                     else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                     {
@@ -644,55 +695,55 @@ namespace Beztek.Facade.Sql
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.Where(expression.Name, Relation.EqualTo.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.EqualTo.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, "!=", expression.Value);
+                            query.Where(expression.Name, "!=", value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.GreaterThan))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.Where(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.GreaterThan.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.GreaterThanOrEqualTo))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.LessThan.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.LessThan))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.Where(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.LessThan.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.LessThanOrEqualTo))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.Where(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
+                            query.Where(expression.Name, Relation.GreaterThan.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.In))
@@ -703,33 +754,33 @@ namespace Beztek.Facade.Sql
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.WhereStarts(expression.Name, expression.Value);
+                            query.WhereStarts(expression.Name, value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.WhereNotStarts(expression.Name, expression.Value);
+                            query.WhereNotStarts(expression.Name, value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.EndsWith))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.WhereEnds(expression.Name, expression.Value);
+                            query.WhereEnds(expression.Name, value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.WhereNotEnds(expression.Name, expression.Value);
+                            query.WhereNotEnds(expression.Name, value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.Contains))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
-                            query.WhereContains(expression.Name, expression.Value);
+                            query.WhereContains(expression.Name, value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
                         {
-                            query.WhereNotContains(expression.Name, expression.Value);
+                            query.WhereNotContains(expression.Name, value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.NullValue))
@@ -756,7 +807,7 @@ namespace Beztek.Facade.Sql
                     }
                     else if (Object.Equals(expression.Relation, Relation.Exists))
                     {
-                        SqlSelect sqlForExistanceCheck = (SqlSelect)expression.Value;
+                        SqlSelect sqlForExistanceCheck = (SqlSelect)value;
                         if (Object.Equals(logicalRelation, LogicalRelation.And))
                         {
                             query.WhereExists(BuildSelectQuery(new Query(), sqlForExistanceCheck));
@@ -779,7 +830,7 @@ namespace Beztek.Facade.Sql
                 {
                     if (Object.Equals(logicalRelation, LogicalRelation.Or))
                     {
-                        query.OrWhereRaw(expression.Name, (object[])expression.Value);
+                        query.OrWhereRaw(expression.Name, (object[])value);
                     }
                     else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                     {
@@ -792,55 +843,55 @@ namespace Beztek.Facade.Sql
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhere(expression.Name, Relation.EqualTo.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.EqualTo.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, "!=", expression.Value);
+                            query.OrWhere(expression.Name, "!=", value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.GreaterThan))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.GreaterThanOrEqualTo))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.LessThan))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.LessThanOrEqualTo))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), expression.Value);
+                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.In))
@@ -851,33 +902,33 @@ namespace Beztek.Facade.Sql
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhereStarts(expression.Name, expression.Value);
+                            query.OrWhereStarts(expression.Name, value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhereNotStarts(expression.Name, expression.Value);
+                            query.OrWhereNotStarts(expression.Name, value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.EndsWith))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhereEnds(expression.Name, expression.Value);
+                            query.OrWhereEnds(expression.Name, value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhereNotEnds(expression.Name, expression.Value);
+                            query.OrWhereNotEnds(expression.Name, value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.Contains))
                     {
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
-                            query.OrWhereContains(expression.Name, expression.Value);
+                            query.OrWhereContains(expression.Name, value);
                         }
                         else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
                         {
-                            query.OrWhereNotContains(expression.Name, expression.Value);
+                            query.OrWhereNotContains(expression.Name, value);
                         }
                     }
                     else if (Object.Equals(expression.Relation, Relation.NullValue))
@@ -904,7 +955,7 @@ namespace Beztek.Facade.Sql
                     }
                     else if (Object.Equals(expression.Relation, Relation.Exists))
                     {
-                        SqlSelect sqlForExistanceCheck = (SqlSelect)expression.Value;
+                        SqlSelect sqlForExistanceCheck = (SqlSelect)value;
                         if (Object.Equals(logicalRelation, LogicalRelation.Or))
                         {
                             query.OrWhereExists(BuildSelectQuery(new Query(), sqlForExistanceCheck));
@@ -957,7 +1008,7 @@ namespace Beztek.Facade.Sql
             Dictionary<string, object> fields = new Dictionary<string, object>();
             foreach (Field field in sqlUpdate.Fields)
             {
-                fields.Add(field.Name, field.Value);
+                fields.Add(field.Name, UnwrapJsonValue(field.Value));
             }
 
             query.AsUpdate(fields);
@@ -1004,7 +1055,7 @@ namespace Beztek.Facade.Sql
                 Dictionary<string, object> fields = new Dictionary<string, object>();
                 foreach (Field field in sqlInsert.Fields)
                 {
-                    fields.Add(field.Name, field.Value);
+                    fields.Add(field.Name, UnwrapJsonValue(field.Value));
                 }
 
                 query.AsInsert(fields);
