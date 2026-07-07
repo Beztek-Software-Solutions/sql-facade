@@ -4,8 +4,8 @@ namespace Beztek.Facade.Sql
 {
     using System;
     using System.Data;
-    using Microsoft.Data.SqlClient;
     using System.Transactions;
+    using Microsoft.Data.SqlClient;
     using Microsoft.Data.Sqlite;
     using Npgsql;
 
@@ -15,6 +15,12 @@ namespace Beztek.Facade.Sql
 
         public string ConnectionString { get; set; }
 
+        /// <summary>
+        /// Isolation level for <see cref="SqlFacade"/> <see cref="System.Transactions.TransactionScope"/> wrappers.
+        /// Defaults to <see cref="System.Transactions.IsolationLevel.ReadCommitted"/> (PostgreSQL default; avoids Serializable 40001 aborts under concurrency).
+        /// </summary>
+        public System.Transactions.IsolationLevel TransactionIsolationLevel { get; set; } = System.Transactions.IsolationLevel.ReadCommitted;
+
         public SqlFacadeConfig(DbType dbType, string connectionString)
         {
             this.DbType = dbType;
@@ -23,15 +29,18 @@ namespace Beztek.Facade.Sql
 
         public override bool Equals(Object obj)
         {
-            if (!(obj is SqlFacadeConfig))
+            if (!(obj is SqlFacadeConfig other))
                 return false;
-            else
-                return DbType == ((SqlFacadeConfig)obj).DbType && String.Equals(ConnectionString, ((SqlFacadeConfig)obj).ConnectionString);
+            return DbType == other.DbType
+                && String.Equals(ConnectionString, other.ConnectionString)
+                && TransactionIsolationLevel == other.TransactionIsolationLevel;
         }
 
         public override int GetHashCode()
         {
-            return DbType.GetHashCode() ^ ConnectionString.GetHashCode();
+            return DbType.GetHashCode()
+                ^ ConnectionString.GetHashCode()
+                ^ TransactionIsolationLevel.GetHashCode();
         }
 
         public virtual IDbConnection GetConnection()

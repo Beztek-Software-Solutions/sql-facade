@@ -2,7 +2,6 @@
 
 namespace Beztek.Facade.Sql
 {
-    using System;
     using System.Collections.Generic;
     using System.Text.Json;
     using System.Text.Json.Serialization;
@@ -40,7 +39,7 @@ namespace Beztek.Facade.Sql
         {
             FromDerivedTable = fromDerivedTable;
         }
-        
+
         public SqlSelect(CommonTableExpression fromCTE) : this()
         {
             FromDerivedTable = fromCTE;

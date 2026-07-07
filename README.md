@@ -12,6 +12,8 @@ It is a reusable and configurable sql facade library.
 1. Find SQL connection string. It currently supports Postgres SQL, Sql Server and SQLite (in-memory and file-based)/
 2. Instantiate the SqlFacade object from the SqlFacadeFactory, using the appropriate SqlFacadeConfig object
 
+`SqlFacadeConfig.TransactionIsolationLevel` controls the `TransactionScope` isolation for every SQL call (default **ReadCommitted**). Set to `Serializable` only when a caller truly needs serializable semantics.
+
 ## Sample Project
 
 The solution contains a sample project that you can modify and run to test out different use cases and scenarios. Simply set it as the startup project and then run. The unit tests also provide examples of how to use this library.

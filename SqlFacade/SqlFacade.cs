@@ -111,7 +111,16 @@ namespace Beztek.Facade.Sql
         /// <returns>The result of the execution</returns>
         private V ExecuteInTransaction<V>(object[] parameters, Func<QFactory, object[], V> func)
         {
-            using TransactionScope transactionScope = new TransactionScope(System.Transactions.Transaction.Current != null ? TransactionScopeOption.RequiresNew : TransactionScopeOption.Required);
+            var scopeOption = System.Transactions.Transaction.Current != null
+                ? TransactionScopeOption.RequiresNew
+                : TransactionScopeOption.Required;
+            var transactionOptions = new TransactionOptions {
+                IsolationLevel = sqlFacadeConfig.TransactionIsolationLevel,
+            };
+            using TransactionScope transactionScope = new TransactionScope(
+                scopeOption,
+                transactionOptions,
+                TransactionScopeAsyncFlowOption.Enabled);
 
             using QFactory qFactory = new QFactory(sqlFacadeConfig);
             try

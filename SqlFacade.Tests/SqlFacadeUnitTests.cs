@@ -6,6 +6,7 @@ namespace Beztek.Facade.Sql.Test
     using System.Collections.Generic;
     using System.Data;
     using System.Linq;
+    using System.Transactions;
     using Beztek.Facade.Sql;
     using Microsoft.Data.Sqlite;
     using NUnit.Framework;
@@ -30,6 +31,13 @@ namespace Beztek.Facade.Sql.Test
                 using var cmd2 = new SqliteCommand(stm2, (SqliteConnection)con);
                 cmd2.ExecuteNonQuery();
             }
+        }
+
+        [Test]
+        public void SqlFacadeConfig_DefaultTransactionIsolationLevel_IsReadCommitted()
+        {
+            var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:");
+            Assert.That(config.TransactionIsolationLevel, Is.EqualTo(System.Transactions.IsolationLevel.ReadCommitted));
         }
 
         [Test]
@@ -187,7 +195,7 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(2, Is.EqualTo(var.Count));
 
             SqlSelect nestedCteSelect = new SqlSelect(new CommonTableExpression(sqlSelect, "agg"))
-                .WithField(new Field("count(*)","num", true));
+                .WithField(new Field("count(*)", "num", true));
             // Check that the three nested CTEs bubble up to the nestedSqlSelect
             Assert.That(3, Is.EqualTo(nestedCteSelect.CommonTableExpressions.Count));
 
@@ -273,7 +281,7 @@ namespace Beztek.Facade.Sql.Test
         {
             CleanDB();
             BatchWrite(1000);
-            
+
             SqlSelect sqlSelect = new SqlSelect(new Table("canvas"))
                 .WithField(new Field("id"))
                 .WithField(new Field("color"))
@@ -290,7 +298,7 @@ namespace Beztek.Facade.Sql.Test
             // serialize query and then deserialize it.
             string jsonQuery = sqlSelect.ToString();
             sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
-                                    
+
             IList<Canvas> results = sqlFacade.GetResults<Canvas>(sqlSelect);
             Assert.That(2, Is.EqualTo(results.Count));
             Assert.That(canvas13, Is.EqualTo(results[0]));
@@ -302,7 +310,7 @@ namespace Beztek.Facade.Sql.Test
             // serialize query and then deserialize it.
             jsonQuery = sqlSelect.ToString();
             sqlSelect = (SqlSelect)sqlFacade.DeserializeFromJson(jsonQuery);
-                                    
+
             results = sqlFacade.GetResults<Canvas>(sqlSelect);
             Assert.That(2, Is.EqualTo(results.Count));
             Assert.That(canvas13, Is.EqualTo(results[0]));
