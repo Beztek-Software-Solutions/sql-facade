@@ -6,7 +6,6 @@ namespace Beztek.Facade.Sql.Test
     using System.Collections.Generic;
     using System.Data;
     using System.Linq;
-    using System.Transactions;
     using Beztek.Facade.Sql;
     using Microsoft.Data.Sqlite;
     using NUnit.Framework;
