@@ -289,7 +289,63 @@ namespace Beztek.Facade.Sql
             options.Converters.Add(new FlexibleNullableDateTimeConverter());
             options.Converters.Add(new FlexibleDateOnlyConverter());
             options.Converters.Add(new FlexibleNullableDateOnlyConverter());
+            // Postgres historically cast NestedList aggregates to text; grandchild arrays then
+            // appear as JSON strings inside parent objects. Accept both arrays and stringified arrays.
+            options.Converters.Add(new FlexibleObjectListConverterFactory());
             return options;
+        }
+
+        private sealed class FlexibleObjectListConverterFactory : JsonConverterFactory
+        {
+            public override bool CanConvert(Type typeToConvert) =>
+                typeToConvert.IsGenericType
+                && typeToConvert.GetGenericTypeDefinition() == typeof(List<>);
+
+            public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options)
+            {
+                Type elementType = typeToConvert.GetGenericArguments()[0];
+                return (JsonConverter)Activator.CreateInstance(
+                    typeof(FlexibleObjectListConverter<>).MakeGenericType(elementType));
+            }
+        }
+
+        private sealed class FlexibleObjectListConverter<T> : JsonConverter<List<T>>
+        {
+            private static readonly JsonSerializerOptions InnerOptions = CreateInnerOptions();
+
+            private static JsonSerializerOptions CreateInnerOptions()
+            {
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                options.Converters.Add(new FlexibleBoolConverter());
+                options.Converters.Add(new FlexibleNullableBoolConverter());
+                options.Converters.Add(new FlexibleDecimalConverter());
+                options.Converters.Add(new FlexibleNullableDecimalConverter());
+                options.Converters.Add(new FlexibleDateTimeConverter());
+                options.Converters.Add(new FlexibleNullableDateTimeConverter());
+                options.Converters.Add(new FlexibleDateOnlyConverter());
+                options.Converters.Add(new FlexibleNullableDateOnlyConverter());
+                // Intentionally omit FlexibleObjectListConverterFactory to avoid recursion.
+                return options;
+            }
+
+            public override List<T> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                if (reader.TokenType == JsonTokenType.Null)
+                    return null;
+                if (reader.TokenType == JsonTokenType.String)
+                {
+                    string s = reader.GetString();
+                    if (string.IsNullOrWhiteSpace(s) || s == "[]")
+                        return new List<T>();
+                    return JsonSerializer.Deserialize<List<T>>(s, InnerOptions) ?? new List<T>();
+                }
+                if (reader.TokenType == JsonTokenType.StartArray)
+                    return JsonSerializer.Deserialize<List<T>>(ref reader, InnerOptions) ?? new List<T>();
+                throw new JsonException($"Unexpected token {reader.TokenType} for List<{typeof(T).Name}>.");
+            }
+
+            public override void Write(Utf8JsonWriter writer, List<T> value, JsonSerializerOptions options) =>
+                JsonSerializer.Serialize(writer, value, InnerOptions);
         }
 
         private static bool ParseBool(object raw)

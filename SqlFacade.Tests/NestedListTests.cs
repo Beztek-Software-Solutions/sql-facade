@@ -55,7 +55,17 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(sql, Does.Contain("row_to_json"));
             Assert.That(sql, Does.Contain("FROM \"child\" AS \"ch\"").Or.Contain("FROM child AS ch"));
             Assert.That(sql, Does.Contain("ORDER BY \"ch\".\"sort_ord\""));
-            Assert.That(sql, Does.Contain("json_build_array()"));
+            Assert.That(sql, Does.Contain("'[]'::json"));
+            Assert.That(sql, Does.Not.Contain("json_agg(row_to_json(_j))::text"));
+        }
+
+        [Test]
+        public void ToSql_Postgres_KeepsNestedListAsJsonNotText()
+        {
+            // Grandchild NestedLists must remain json so row_to_json embeds arrays (not strings).
+            string sql = NestedChildWithTags().ToSql(SqlDbType.POSTGRES);
+            Assert.That(sql, Does.Contain("json_agg(row_to_json(_j))"));
+            Assert.That(sql, Does.Not.Contain("::text"));
         }
 
         [Test]

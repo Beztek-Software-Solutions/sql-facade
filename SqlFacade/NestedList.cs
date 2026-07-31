@@ -252,8 +252,12 @@ namespace Beztek.Facade.Sql
             return facade.GetSql(child, isParameterized: false);
         }
 
+        /// <summary>
+        /// Keep the aggregate typed as <c>json</c> (not <c>::text</c>). Text forces
+        /// <c>row_to_json</c> to embed grandchild NestedList columns as JSON strings, which breaks mapping.
+        /// </summary>
         private static string WrapPostgres(string innerSql) =>
-            "(SELECT COALESCE(json_agg(row_to_json(_j))::text, json_build_array()::text) FROM ("
+            "(SELECT COALESCE(json_agg(row_to_json(_j)), '[]'::json) FROM ("
             + innerSql
             + ") AS _j)";
 
