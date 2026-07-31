@@ -259,11 +259,24 @@ namespace Beztek.Facade.Sql
 
         private static string WrapSqlite(string innerSql, SqlSelect childSelect)
         {
-            var objArgs = string.Join(", ", childSelect.Fields.Select(f =>
+            // Include NestedList columns (grandchildren). json() is required so nested JSON
+            // arrays are embedded as arrays, not double-encoded strings.
+            IEnumerable<string> fieldArgs = (childSelect.Fields ?? Array.Empty<Field>()).Select(f =>
             {
                 string key = JsonKeyFor(f);
                 return $"'{EscapeSqliteString(key)}', {QuoteSqliteIdent(key)}";
-            }));
+            });
+            IEnumerable<string> nestedArgs = (childSelect.NestedLists ?? Array.Empty<NestedList>())
+                .Where(n => n != null && !string.IsNullOrWhiteSpace(n.ResultAlias))
+                .Select(n =>
+                {
+                    string key = n.ResultAlias.Trim();
+                    return $"'{EscapeSqliteString(key)}', json({QuoteSqliteIdent(key)})";
+                });
+            string objArgs = string.Join(", ", fieldArgs.Concat(nestedArgs));
+            if (string.IsNullOrWhiteSpace(objArgs))
+                throw new InvalidOperationException(
+                    "NestedList SQLite wrap requires at least one Field or NestedList on the child select.");
             return "(SELECT COALESCE(json_group_array(json_object(" + objArgs + ")), json_array()) FROM ("
                 + innerSql
                 + ") AS _j)";

@@ -155,22 +155,7 @@ namespace Beztek.Facade.Sql
                 return ParseTimeOnly(raw);
 
             if (underlying == typeof(bool))
-            {
-                if (raw is bool b)
-                    return b;
-                if (raw is long l)
-                    return l != 0;
-                if (raw is int i)
-                    return i != 0;
-                if (raw is string bs)
-                {
-                    if (bs == "1" || bs.Equals("true", StringComparison.OrdinalIgnoreCase))
-                        return true;
-                    if (bs == "0" || bs.Equals("false", StringComparison.OrdinalIgnoreCase))
-                        return false;
-                    return bool.Parse(bs);
-                }
-            }
+                return ParseBool(raw);
 
             if (raw is string s)
             {
@@ -189,26 +174,75 @@ namespace Beztek.Facade.Sql
             return Convert.ChangeType(raw, underlying, CultureInfo.InvariantCulture);
         }
 
+        private static readonly string[] DateTimeExactFormats =
+        [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss.fff",
+            "yyyy-MM-dd HH:mm:ss.fffffff",
+            "yyyy-MM-ddTHH:mm:ss",
+            "yyyy-MM-ddTHH:mm:ss.fff",
+            "yyyy-MM-ddTHH:mm:ss.fffffff",
+            "yyyy-MM-ddTHH:mm:ssZ",
+            "yyyy-MM-ddTHH:mm:ss.fffZ",
+            "yyyy-MM-ddTHH:mm:ss.fffffffZ",
+            "yyyy-MM-dd HH:mm:sszzz",
+            "yyyy-MM-dd HH:mm:ss.fffzzz",
+            "yyyy-MM-ddTHH:mm:sszzz",
+            "yyyy-MM-ddTHH:mm:ss.fffzzz",
+            "yyyy-MM-dd"
+        ];
+
         private static DateTime ParseDateTime(object raw)
         {
             if (raw is DateTime dt)
-                return dt;
+                return DateTime.SpecifyKind(dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime(), DateTimeKind.Utc);
             if (raw is DateTimeOffset dto)
                 return dto.UtcDateTime;
             string text = Convert.ToString(raw, CultureInfo.InvariantCulture)?.Trim();
             if (string.IsNullOrEmpty(text))
                 throw new FormatException("Empty DateTime value.");
-            if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTime parsed))
-                return parsed;
-            // SQLite often emits "yyyy-MM-dd HH:mm:ss" without a T separator.
+
+            // Offset-less SQLite / Postgres text is UTC wall-clock. Do not call DateTimeOffset.TryParse
+            // first — without a designator it assumes local time and shifts the instant.
             if (DateTime.TryParseExact(
                     text,
-                    new[] { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.fff", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-ddTHH:mm:ss.fff", "yyyy-MM-dd" },
+                    DateTimeExactFormats,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out DateTime parsed))
+                return DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+
+            if (HasExplicitTimezoneDesignator(text)
+                && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTimeOffset offsetParsed))
+                return offsetParsed.UtcDateTime;
+
+            if (DateTime.TryParse(
+                    text,
                     CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
                     out parsed))
-                return parsed;
-            return DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+                return DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+
+            throw new FormatException($"Unrecognized DateTime value: '{text}'.");
+        }
+
+        private static bool HasExplicitTimezoneDesignator(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return false;
+            if (text.EndsWith("Z", StringComparison.OrdinalIgnoreCase))
+                return true;
+            // Only inspect the time portion so YYYY-MM-DD dashes are not treated as offsets.
+            int sep = text.IndexOf('T');
+            if (sep < 0)
+                sep = text.IndexOf(' ');
+            if (sep < 0)
+                return false;
+            string timePart = text.Substring(sep + 1);
+            return timePart.Contains('+')
+                || timePart.Contains('-')
+                || timePart.Contains("UTC", StringComparison.OrdinalIgnoreCase)
+                || timePart.Contains("GMT", StringComparison.OrdinalIgnoreCase);
         }
 
         private static DateOnly ParseDateOnly(object raw)
@@ -247,11 +281,101 @@ namespace Beztek.Facade.Sql
             {
                 PropertyNameCaseInsensitive = true
             };
+            options.Converters.Add(new FlexibleBoolConverter());
+            options.Converters.Add(new FlexibleNullableBoolConverter());
+            options.Converters.Add(new FlexibleDecimalConverter());
+            options.Converters.Add(new FlexibleNullableDecimalConverter());
             options.Converters.Add(new FlexibleDateTimeConverter());
             options.Converters.Add(new FlexibleNullableDateTimeConverter());
             options.Converters.Add(new FlexibleDateOnlyConverter());
             options.Converters.Add(new FlexibleNullableDateOnlyConverter());
             return options;
+        }
+
+        private static bool ParseBool(object raw)
+        {
+            if (raw is bool b)
+                return b;
+            if (raw is long l)
+                return l != 0;
+            if (raw is int i)
+                return i != 0;
+            if (raw is double d)
+                return Math.Abs(d) > double.Epsilon;
+            string text = Convert.ToString(raw, CultureInfo.InvariantCulture)?.Trim();
+            if (string.IsNullOrEmpty(text))
+                throw new FormatException("Empty Boolean value.");
+            if (text == "1" || text.Equals("true", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (text == "0" || text.Equals("false", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return bool.Parse(text);
+        }
+
+        private sealed class FlexibleBoolConverter : JsonConverter<bool>
+        {
+            public override bool Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+                reader.TokenType switch
+                {
+                    JsonTokenType.True => true,
+                    JsonTokenType.False => false,
+                    JsonTokenType.Number => reader.TryGetInt64(out long n) ? n != 0 : reader.GetDouble() != 0,
+                    JsonTokenType.String => ParseBool(reader.GetString()),
+                    _ => throw new JsonException($"Unexpected token {reader.TokenType} for Boolean.")
+                };
+
+            public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options) =>
+                writer.WriteBooleanValue(value);
+        }
+
+        private sealed class FlexibleNullableBoolConverter : JsonConverter<bool?>
+        {
+            public override bool? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                if (reader.TokenType == JsonTokenType.Null)
+                    return null;
+                return new FlexibleBoolConverter().Read(ref reader, typeof(bool), options);
+            }
+
+            public override void Write(Utf8JsonWriter writer, bool? value, JsonSerializerOptions options)
+            {
+                if (value.HasValue)
+                    writer.WriteBooleanValue(value.Value);
+                else
+                    writer.WriteNullValue();
+            }
+        }
+
+        private sealed class FlexibleDecimalConverter : JsonConverter<decimal>
+        {
+            public override decimal Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+                reader.TokenType switch
+                {
+                    JsonTokenType.Number => reader.GetDecimal(),
+                    JsonTokenType.String => decimal.Parse(reader.GetString()!, CultureInfo.InvariantCulture),
+                    _ => throw new JsonException($"Unexpected token {reader.TokenType} for Decimal.")
+                };
+
+            public override void Write(Utf8JsonWriter writer, decimal value, JsonSerializerOptions options) =>
+                writer.WriteNumberValue(value);
+        }
+
+        private sealed class FlexibleNullableDecimalConverter : JsonConverter<decimal?>
+        {
+            public override decimal? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                if (reader.TokenType == JsonTokenType.Null)
+                    return null;
+                return new FlexibleDecimalConverter().Read(ref reader, typeof(decimal), options);
+            }
+
+            public override void Write(Utf8JsonWriter writer, decimal? value, JsonSerializerOptions options)
+            {
+                if (value.HasValue)
+                    writer.WriteNumberValue(value.Value);
+                else
+                    writer.WriteNullValue();
+            }
         }
 
         private sealed class FlexibleDateTimeConverter : JsonConverter<DateTime>

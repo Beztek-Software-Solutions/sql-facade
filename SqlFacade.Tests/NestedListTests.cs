@@ -22,8 +22,9 @@ namespace Beztek.Facade.Sql.Test
             _sqlite = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(SqlDbType.SQLITE, "Data Source=:memory:"));
             using IDbConnection con = _sqlite.GetSqlFacadeConfig().GetConnection();
             using var cmd = new SqliteCommand(
-                "CREATE TABLE parent(id TEXT PRIMARY KEY, name TEXT);"
-                + "CREATE TABLE child(id TEXT PRIMARY KEY, parent_id TEXT, label TEXT, sort_ord INT);"
+                "CREATE TABLE parent(id TEXT PRIMARY KEY, name TEXT, created_at TEXT);"
+                + "CREATE TABLE child(id TEXT PRIMARY KEY, parent_id TEXT, label TEXT, sort_ord INT, joined_at TEXT);"
+                + "CREATE TABLE grandchild(id TEXT PRIMARY KEY, child_id TEXT, tag TEXT);"
                 , (SqliteConnection)con);
             cmd.ExecuteNonQuery();
         }
@@ -32,7 +33,9 @@ namespace Beztek.Facade.Sql.Test
         public void SetUp()
         {
             using IDbConnection con = _sqlite.GetSqlFacadeConfig().GetConnection();
-            using var cmd = new SqliteCommand("DELETE FROM child; DELETE FROM parent;", (SqliteConnection)con);
+            using var cmd = new SqliteCommand(
+                "DELETE FROM grandchild; DELETE FROM child; DELETE FROM parent;",
+                (SqliteConnection)con);
             cmd.ExecuteNonQuery();
         }
 
@@ -163,6 +166,88 @@ namespace Beztek.Facade.Sql.Test
         }
 
         [Test]
+        public void ToSql_Sqlite_IncludesGrandchildNestedListWithJson()
+        {
+            string sql = NestedChildWithTags().ToSql(SqlDbType.SQLITE);
+            Assert.That(sql, Does.Contain("'Tags', json(Tags)").Or.Contain("'Tags', json(\"Tags\")"));
+        }
+
+        [Test]
+        public void Sqlite_Runtime_OffsetlessTimestamps_AreUtcNotLocal()
+        {
+            // Regression: DateTimeOffset.TryParse on "yyyy-MM-dd HH:mm:ss" assumes local and shifts Kind/instant.
+            _sqlite.ExecuteMultiSqlWrite(new List<ISqlWrite>
+            {
+                new SqlInsert("parent")
+                    .WithField(new Field("id", "p1"))
+                    .WithField(new Field("name", "Parent One"))
+                    .WithField(new Field("created_at", "2026-07-31 21:00:00.0000000")),
+                new SqlInsert("child")
+                    .WithField(new Field("id", "c1"))
+                    .WithField(new Field("parent_id", "p1"))
+                    .WithField(new Field("label", "first"))
+                    .WithField(new Field("sort_ord", 1))
+                    .WithField(new Field("joined_at", "2026-07-31 21:30:00")),
+            });
+
+            var select = new SqlSelect(new Table("parent", "p"))
+                .WithField(new Field("p.id", "Id"))
+                .WithField(new Field("p.name", "Name"))
+                .WithField(new Field("p.created_at", "CreatedAt"))
+                .WithNestedList(new NestedList<ChildWithJoinedAtDto>("Children",
+                    new SqlSelect(new Table("child", "ch"))
+                        .WithField(new Field("ch.id", "Id"))
+                        .WithField(new Field("ch.label", "Label"))
+                        .WithField(new Field("ch.joined_at", "JoinedAt")),
+                    new Expression("ch.parent_id", "p.id")));
+
+            ParentWithCreatedAt row = _sqlite.GetSingleResult<ParentWithCreatedAt>(select);
+            Assert.That(row.CreatedAt.Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(row.CreatedAt, Is.EqualTo(new DateTime(2026, 7, 31, 21, 0, 0, DateTimeKind.Utc)));
+            Assert.That(row.Children, Is.Not.Null.And.Count.EqualTo(1));
+            Assert.That(row.Children[0].JoinedAt.Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(row.Children[0].JoinedAt, Is.EqualTo(new DateTime(2026, 7, 31, 21, 30, 0, DateTimeKind.Utc)));
+        }
+
+        [Test]
+        public void Sqlite_Runtime_MapsGrandchildNestedList()
+        {
+            _sqlite.ExecuteMultiSqlWrite(new List<ISqlWrite>
+            {
+                new SqlInsert("parent").WithField(new Field("id", "p1")).WithField(new Field("name", "Parent One")),
+                new SqlInsert("child").WithField(new Field("id", "c1")).WithField(new Field("parent_id", "p1"))
+                    .WithField(new Field("label", "first")).WithField(new Field("sort_ord", 1)),
+                new SqlInsert("grandchild").WithField(new Field("id", "g1")).WithField(new Field("child_id", "c1"))
+                    .WithField(new Field("tag", "alpha")),
+                new SqlInsert("grandchild").WithField(new Field("id", "g2")).WithField(new Field("child_id", "c1"))
+                    .WithField(new Field("tag", "beta")),
+            });
+
+            var select = new SqlSelect(new Table("parent", "p"))
+                .WithField(new Field("p.id", "Id"))
+                .WithField(new Field("p.name", "Name"))
+                .WithNestedList(NestedChildWithTags());
+
+            ParentWithTaggedChildren row = _sqlite.GetSingleResult<ParentWithTaggedChildren>(select);
+            Assert.That(row.Children, Is.Not.Null);
+            Assert.That(row.Children.Count, Is.EqualTo(1));
+            Assert.That(row.Children[0].Tags, Is.Not.Null);
+            Assert.That(row.Children[0].Tags.Select(t => t.Tag).ToList(), Is.EquivalentTo(new[] { "alpha", "beta" }));
+        }
+
+        private static NestedList NestedChildWithTags() =>
+            new NestedList<ChildWithTagsDto>("Children",
+                new SqlSelect(new Table("child", "ch"))
+                    .WithField(new Field("ch.id", "Id"))
+                    .WithField(new Field("ch.label", "Label"))
+                    .WithNestedList(new NestedList<TagDto>("Tags",
+                        new SqlSelect(new Table("grandchild", "gc"))
+                            .WithField(new Field("gc.id", "Id"))
+                            .WithField(new Field("gc.tag", "Tag")),
+                        new Expression("gc.child_id", "ch.id"))),
+                new Expression("ch.parent_id", "p.id"));
+
+        [Test]
         public void SqlSelect_RoundTripsNestedListViaJson()
         {
             var select = new SqlSelect(new Table("parent", "p"))
@@ -223,6 +308,21 @@ namespace Beztek.Facade.Sql.Test
             public List<ChildDto> Children { get; set; }
         }
 
+        private sealed class ParentWithCreatedAt
+        {
+            public string Id { get; set; }
+            public string Name { get; set; }
+            public DateTime CreatedAt { get; set; }
+            public List<ChildWithJoinedAtDto> Children { get; set; }
+        }
+
+        private sealed class ChildWithJoinedAtDto
+        {
+            public string Id { get; set; }
+            public string Label { get; set; }
+            public DateTime JoinedAt { get; set; }
+        }
+
         private sealed class ParentWithChildrenArray
         {
             public string Id { get; set; }
@@ -234,6 +334,26 @@ namespace Beztek.Facade.Sql.Test
         {
             public string Id { get; set; }
             public string Label { get; set; }
+        }
+
+        private sealed class ParentWithTaggedChildren
+        {
+            public string Id { get; set; }
+            public string Name { get; set; }
+            public List<ChildWithTagsDto> Children { get; set; }
+        }
+
+        private sealed class ChildWithTagsDto
+        {
+            public string Id { get; set; }
+            public string Label { get; set; }
+            public List<TagDto> Tags { get; set; }
+        }
+
+        private sealed class TagDto
+        {
+            public string Id { get; set; }
+            public string Tag { get; set; }
         }
     }
 }
