@@ -195,19 +195,88 @@ namespace Beztek.Facade.Sql.Example
             {
                 Console.WriteLine($"          Result: {canvas.ToString()}");
             }
+            Console.WriteLine();
+
+            // NestedList — 1:N child list mapped to List<T> on the parent (SQLite runtime + dialect samples)
+            RunNestedListExample();
+        }
+
+        private static void RunNestedListExample()
+        {
+            string label = "NestedList typed child list (SQLite runtime)";
+            CleanDB();
+
+            sqlFacade.ExecuteMultiSqlWrite(new List<ISqlWrite>
+            {
+                new SqlInsert("canvas").WithField(new Field("id", "c-green")).WithField(new Field("color", "green")),
+                new SqlInsert("canvas").WithField(new Field("id", "c-blue")).WithField(new Field("color", "blue")),
+                new SqlInsert("canvas_stroke").WithField(new Field("id", "s2")).WithField(new Field("canvas_id", "c-green"))
+                    .WithField(new Field("label", "second")).WithField(new Field("sort_ord", 2)),
+                new SqlInsert("canvas_stroke").WithField(new Field("id", "s1")).WithField(new Field("canvas_id", "c-green"))
+                    .WithField(new Field("label", "first")).WithField(new Field("sort_ord", 1)),
+            });
+
+            // ResultAlias "Strokes" maps onto CanvasWithStrokes.Strokes (List<StrokeDto>)
+            NestedList strokes = new NestedList<StrokeDto>("Strokes",
+                new SqlSelect(new Table("canvas_stroke", "s"))
+                    .WithField(new Field("s.id", "id"))
+                    .WithField(new Field("s.label", "label"))
+                    .WithField(new Field("s.sort_ord", "sortOrd"))
+                    .WithSort(new Sort("s.sort_ord")),
+                new Expression("s.canvas_id", "c.id"));
+
+            SqlSelect sqlSelect = new SqlSelect(new Table("canvas", "c"))
+                .WithField(new Field("c.id", "Id"))
+                .WithField(new Field("c.color", "Color"))
+                .WithNestedList(strokes)
+                .WithSort(new Sort("c.id"));
+
+            log(label, sqlSelect);
+
+            Console.WriteLine("      Dialect SQL samples (same NestedList / child SqlSelect):");
+            Console.WriteLine($"        Postgres:   {strokes.ToSql(Sql.DbType.POSTGRES)}");
+            Console.WriteLine($"        SQLite:     {strokes.ToSql(Sql.DbType.SQLITE)}");
+            Console.WriteLine($"        SQL Server: {strokes.ToSql(Sql.DbType.SQLSERVER)}");
+            Console.WriteLine();
+
+            NestedList filterForm = new NestedList<StrokeDto>("Strokes",
+                new SqlSelect(new Table("canvas_stroke", "s"))
+                    .WithField(new Field("s.id", "id"))
+                    .WithField(new Field("s.label", "label"))
+                    .WithField(new Field("s.sort_ord", "sortOrd"))
+                    .WithSort(new Sort("s.sort_ord")),
+                new Filter().WithExpression(new Expression("s.canvas_id", "c.id")));
+            Console.WriteLine($"      Filter Correlate form (SQLite): {filterForm.ToSql(Sql.DbType.SQLITE)}");
+            Console.WriteLine();
+
+            IList<CanvasWithStrokes> rows = sqlFacade.GetResults<CanvasWithStrokes>(sqlSelect);
+            foreach (CanvasWithStrokes row in rows)
+            {
+                Console.WriteLine($"          Canvas {row.Id} ({row.Color}): {row.Strokes?.Count ?? 0} stroke(s)");
+                foreach (StrokeDto stroke in row.Strokes ?? [])
+                {
+                    Console.WriteLine($"            stroke id={stroke.Id} label={stroke.Label} sortOrd={stroke.SortOrd}");
+                }
+            }
+            Console.WriteLine();
         }
 
         public static void CreateDB()
         {
             // Drop tables if they exist
+            string d0 = "DROP TABLE IF EXISTS canvas_stroke";
             string d1 = "DROP TABLE IF EXISTS `canvas-metdata`";
             string d2 = "DROP TABLE IF EXISTS canvas";
             // Create the tables
             string c1 = "CREATE TABLE canvas(id TEXT PRIMARY KEY, color TEXT)";
             string c2 = "CREATE TABLE `canvas-metdata`(id TEXT PRIMARY KEY, extra_data TEXT, FOREIGN KEY (id) references canvas (id))";
+            string c3 = "CREATE TABLE canvas_stroke(id TEXT PRIMARY KEY, canvas_id TEXT, label TEXT, sort_ord INT, FOREIGN KEY (canvas_id) references canvas (id))";
 
             using (IDbConnection con = sqlFacade.GetSqlFacadeConfig().GetConnection())
             {
+                using var cmd0 = new SqliteCommand(d0, (SqliteConnection)con);
+                cmd0.ExecuteNonQuery();
+
                 using var cmd1 = new SqliteCommand(d1, (SqliteConnection)con);
                 cmd1.ExecuteNonQuery();
 
@@ -219,15 +288,23 @@ namespace Beztek.Facade.Sql.Example
 
                 using var cmd4 = new SqliteCommand(c2, (SqliteConnection)con);
                 cmd4.ExecuteNonQuery();
+
+                using var cmd5 = new SqliteCommand(c3, (SqliteConnection)con);
+                cmd5.ExecuteNonQuery();
             }
         }
 
         private static void CleanDB()
         {
-            // Delete Extended canvas data
-            String label = "Delete extended canvas data";
-            SqlDelete sqlDelete = new SqlDelete("canvas-metdata");
+            // Delete stroke / extended canvas data
+            String label = "Delete canvas strokes";
+            SqlDelete sqlDelete = new SqlDelete("canvas_stroke");
             int rowsChanged = sqlFacade.ExecuteSqlWrite(sqlDelete);
+            log(label, sqlDelete, $"{rowsChanged} row(s) deleted");
+
+            label = "Delete extended canvas data";
+            sqlDelete = new SqlDelete("canvas-metdata");
+            rowsChanged = sqlFacade.ExecuteSqlWrite(sqlDelete);
             log(label, sqlDelete, $"{rowsChanged} row(s) deleted");
 
             // Delete canvas data

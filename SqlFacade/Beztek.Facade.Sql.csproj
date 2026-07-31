@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <id>Beztek.Facade.Sql</id>
-    <version>1.1.9</version>
+    <version>1.2.0</version>
     <authors>Peter Thomas</authors>
     <owners>Beztek Software Solutions</owners>
     <projectUrl>https://github.com/Beztek-Software-Solutions/sql-facade</projectUrl>

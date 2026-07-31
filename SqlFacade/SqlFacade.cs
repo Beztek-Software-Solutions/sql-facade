@@ -152,7 +152,25 @@ namespace Beztek.Facade.Sql
             SqlSelect sqlSelect = (SqlSelect)parameters[0];
             Query query = (XQuery)qFactory.Factory.Query();
             BuildQuery(query, sqlSelect);
+            if (sqlSelect.NestedLists != null && sqlSelect.NestedLists.Count > 0)
+                return NestedListMapper.Map<T>(query.Get(), sqlSelect.NestedLists);
             return query.Get<T>().AsList();
+        }
+
+        /// <summary>
+        /// Compiles the child <see cref="SqlSelect"/> with the same builder as top-level queries,
+        /// then wraps it in the dialect-specific JSON array aggregate.
+        /// </summary>
+        private string BuildNestedListSubquery(NestedList nestedList)
+        {
+            if (nestedList == null)
+                throw new ArgumentNullException(nameof(nestedList));
+
+            SqlSelect effective = nestedList.SelectForCompile();
+            Query innerQuery = new Query();
+            BuildSelectQuery(innerQuery, effective);
+            string innerSql = QFactory.GetCompiler(sqlFacadeConfig.DbType).Compile(innerQuery).ToString();
+            return NestedList.Wrap(sqlFacadeConfig.DbType, innerSql, effective);
         }
 
         private PagedResults<T> GetPagedResults<T>(QFactory qFactory, object[] parameters)
@@ -170,7 +188,9 @@ namespace Beztek.Facade.Sql
 
             // Execution
             int totalRows = retrieveTotalNumResults ? GetTotalNumResults(qFactory, new[] { sqlSelect }) : -1;
-            List<T> results = query.Get<T>().AsList();
+            List<T> results = sqlSelect.NestedLists != null && sqlSelect.NestedLists.Count > 0
+                ? NestedListMapper.Map<T>(query.Get(), sqlSelect.NestedLists)
+                : query.Get<T>().AsList();
 
             return retrieveTotalNumResults ? new PagedResultsWithTotal<T>(pageNum, pageSize, results, totalRows) : new PagedResults<T>(pageNum, pageSize, results);
         }
@@ -277,6 +297,16 @@ namespace Beztek.Facade.Sql
                     {
                         query.Select(field.Value == null ? field.Name : field.Name + " as " + field.Value);
                     }
+                }
+            }
+
+            // Correlated child-list aggregates (Postgres / SQLite / SQL Server) → typed lists on parent
+            if (sqlSelect.NestedLists != null)
+            {
+                foreach (NestedList nestedList in sqlSelect.NestedLists)
+                {
+                    string subquery = BuildNestedListSubquery(nestedList);
+                    query.SelectRaw(subquery + " as " + nestedList.ResultAlias);
                 }
             }
 

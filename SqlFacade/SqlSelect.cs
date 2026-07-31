@@ -13,6 +13,11 @@ namespace Beztek.Facade.Sql
         public DerivedTable FromDerivedTable { get; set; }
         public IList<CommonTableExpression> CommonTableExpressions { get; set; }
         public IList<Field> Fields { get; set; }
+        /// <summary>
+        /// Correlated child-list aggregates compiled per <see cref="DbType"/> and mapped to typed lists
+        /// on the parent row (see <see cref="NestedList"/>).
+        /// </summary>
+        public IList<NestedList> NestedLists { get; set; }
         public IList<Join> Joins { get; set; }
         public Filter Where { get; set; }
         public IList<GroupBy> GroupBys { get; set; }
@@ -69,6 +74,21 @@ namespace Beztek.Facade.Sql
                 Fields = new List<Field>();
             }
             this.Fields.Add(field);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a nested child list mapped to a typed list property on the parent row.
+        /// </summary>
+        public SqlSelect WithNestedList(NestedList nestedList)
+        {
+            if (nestedList == null)
+                throw new System.ArgumentNullException(nameof(nestedList));
+            if (NestedLists == null)
+            {
+                NestedLists = new List<NestedList>();
+            }
+            this.NestedLists.Add(nestedList);
             return this;
         }
 
