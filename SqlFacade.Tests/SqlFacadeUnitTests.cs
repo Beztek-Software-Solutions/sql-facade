@@ -725,6 +725,23 @@ namespace Beztek.Facade.Sql.Test
             results = sqlFacade.GetResults<Canvas>(sqlSelect);
             Assert.That(3, Is.EqualTo(results.Count));
 
+            // Union + OrderBy must wrap so ORDER BY is outside the UNION (SqlKata otherwise
+            // attaches OrderBy to the first branch).
+            sqlSelect = new SqlSelect(new Table("canvas"))
+                .WithField(new Field("id"))
+                .WithField(new Field("color"))
+                .WithWhere(new Filter()
+                        .WithExpression(new Expression("id", "another-uuid")))
+                        .WithCombine(new SqlCombine(sqlSelectAllGreen, SqlRelation.UnionAll))
+                        .WithSort(new Sort("id", false));
+            string unionOrderSql = sqlFacade.GetSql(sqlSelect, false);
+            Assert.That(unionOrderSql.ToUpperInvariant().LastIndexOf("UNION"), Is.LessThan(unionOrderSql.ToUpperInvariant().LastIndexOf("ORDER BY")));
+            Assert.That(unionOrderSql, Does.Contain("_combine").Or.Contain("AS \"_combine\"").IgnoreCase);
+            results = sqlFacade.GetResults<Canvas>(sqlSelect);
+            Assert.That(results.Count, Is.GreaterThanOrEqualTo(1));
+            var paged = sqlFacade.GetPagedResults<Canvas>(sqlSelect, 1, 10, true);
+            Assert.That(paged.PagedList.Count, Is.GreaterThanOrEqualTo(1));
+
             // Except
             sqlSelect = sqlSelect = new SqlSelect(new Table("canvas"))
                 .WithField(new Field("id"))

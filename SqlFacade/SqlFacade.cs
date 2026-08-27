@@ -255,6 +255,28 @@ namespace Beztek.Facade.Sql
 
         private Query BuildSelectQuery(Query query, SqlSelect sqlSelect)
         {
+            // SqlKata attaches OrderBy to the first UNION/INTERSECT/EXCEPT branch. When the select
+            // has both combines and sorts, wrap as a derived table so ORDER BY applies to the result set.
+            if (sqlSelect.SqlCombines != null && sqlSelect.SqlCombines.Count > 0
+                && sqlSelect.Sorts != null && sqlSelect.Sorts.Count > 0)
+            {
+                List<Sort> sorts = sqlSelect.Sorts;
+                sqlSelect.Sorts = null;
+                try
+                {
+                    SqlSelect outer = new SqlSelect(new DerivedTable(sqlSelect, "_combine"));
+                    foreach (Sort sort in sorts)
+                    {
+                        outer = outer.WithSort(sort);
+                    }
+                    return BuildSelectQuery(query, outer);
+                }
+                finally
+                {
+                    sqlSelect.Sorts = sorts;
+                }
+            }
+
             if (sqlSelect.Table != null)
             {
                 query.From(sqlSelect.Table.Alias == null ? sqlSelect.Table.Name : sqlSelect.Table.Name + " as " + sqlSelect.Table.Alias);
@@ -382,23 +404,7 @@ namespace Beztek.Facade.Sql
                 query.Having(q => BuildFilter(q, sqlSelect.Having));
             }
 
-            // Order by clauses
-            if (sqlSelect.Sorts != null)
-            {
-                foreach (Sort sort in sqlSelect.Sorts)
-                {
-                    if (sort.IsAscending)
-                    {
-                        query.OrderBy(sort.Name);
-                    }
-                    else
-                    {
-                        query.OrderByDesc(sort.Name);
-                    }
-                }
-            }
-
-            // Sql Combines
+            // Sql Combines (before OrderBy so UNION … ORDER BY is valid SQL)
             if (sqlSelect.SqlCombines != null)
             {
                 foreach (SqlCombine sqlCombine in sqlSelect.SqlCombines)
@@ -421,6 +427,23 @@ namespace Beztek.Facade.Sql
                     }
                 }
             }
+
+            // Order by clauses
+            if (sqlSelect.Sorts != null)
+            {
+                foreach (Sort sort in sqlSelect.Sorts)
+                {
+                    if (sort.IsAscending)
+                    {
+                        query.OrderBy(sort.Name);
+                    }
+                    else
+                    {
+                        query.OrderByDesc(sort.Name);
+                    }
+                }
+            }
+
             return query;
         }
 
