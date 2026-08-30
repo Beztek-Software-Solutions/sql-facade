@@ -3,7 +3,9 @@
 namespace Beztek.Facade.Sql.Example
 {
     using System.Text.Json;
+    using System.Text.Json.Serialization;
 
+    /// <summary>Simple row DTO for canvas selects (property names match Field aliases / column names).</summary>
     public class Canvas
     {
         public string Id { get; set; }
@@ -11,8 +13,9 @@ namespace Beztek.Facade.Sql.Example
 
         public override string ToString()
         {
-            JsonSerializerOptions options = new JsonSerializerOptions();
-            options.IgnoreNullValues = true;
+            JsonSerializerOptions options = new JsonSerializerOptions {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
             return JsonSerializer.Serialize(this, options);
         }
     }

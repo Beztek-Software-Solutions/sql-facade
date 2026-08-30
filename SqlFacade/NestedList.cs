@@ -61,7 +61,10 @@ namespace Beztek.Facade.Sql
 
         public NestedList() { }
 
+        /// <param name="resultAlias">Parent DTO property name that receives the mapped list.</param>
+        /// <param name="select">Child list query; field aliases become JSON property names.</param>
         /// <param name="correlate">Join-style ON expression (both sides columns); wrapped in a <see cref="Filter"/>.</param>
+        /// <param name="elementType">CLR type of each list element.</param>
         public NestedList(string resultAlias, SqlSelect select, Expression correlate, Type elementType)
             : this(resultAlias, select, WrapCorrelate(correlate), elementType)
         {
