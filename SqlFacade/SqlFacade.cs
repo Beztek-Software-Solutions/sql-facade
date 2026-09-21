@@ -4,6 +4,7 @@ namespace Beztek.Facade.Sql
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Text.Json;
     using System.Transactions;
     using Dapper;
@@ -611,6 +612,23 @@ namespace Beztek.Facade.Sql
             return true;
         }
 
+        /// <summary>
+        /// True when every array element is a GUID string (JSON round-trip of <see cref="Guid"/> lists).
+        /// </summary>
+        private static bool IsGuidJsonArray(JsonElement jsonElement)
+        {
+            foreach (JsonElement item in jsonElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String
+                    || !Guid.TryParse(item.GetString(), out _))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private void ApplyInSubquery<Q>(BaseQuery<Q> query, string column, SqlSelect sqlSelect, InClauseMode mode) where Q : BaseQuery<Q>
         {
             Query subQuery = BuildSelectQuery(new Query(), sqlSelect);
@@ -650,6 +668,24 @@ namespace Beztek.Facade.Sql
             }
         }
 
+        /// <summary>
+        /// Binds GUID IN-list values per dialect: native <see cref="Guid"/> for Postgres
+        /// (<c>uuid</c>) and SQL Server (<c>uniqueidentifier</c>); invariant <c>D</c>-format
+        /// strings for SQLite and any other engine that stores UUIDs as text.
+        /// </summary>
+        private void ApplyGuidInValues<Q>(BaseQuery<Q> query, string column, IEnumerable<Guid> values, InClauseMode mode) where Q : BaseQuery<Q>
+        {
+            if (sqlFacadeConfig.DbType == DbType.POSTGRES || sqlFacadeConfig.DbType == DbType.SQLSERVER)
+            {
+                ApplyInValues(query, column, values, mode);
+            }
+            else
+            {
+                // SQLite and other engines: no native UUID type — bind as text.
+                ApplyInValues(query, column, values.Select(g => g.ToString("D")), mode);
+            }
+        }
+
         private void ApplyInExpression<Q>(BaseQuery<Q> query, Expression expression, InClauseMode mode) where Q : BaseQuery<Q>
         {
             object value = expression.Value;
@@ -674,7 +710,15 @@ namespace Beztek.Facade.Sql
                     string json = jsonElement.GetRawText();
                     if (IsStringJsonArray(jsonElement))
                     {
-                        ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<string>>(json), mode);
+                        // Guid[] serializes to a string array; prefer Guid binding when every element parses.
+                        if (IsGuidJsonArray(jsonElement))
+                        {
+                            ApplyGuidInValues(query, column, JsonSerializer.Deserialize<IEnumerable<Guid>>(json), mode);
+                        }
+                        else
+                        {
+                            ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<string>>(json), mode);
+                        }
                     }
                     else
                     {
@@ -696,6 +740,10 @@ namespace Beztek.Facade.Sql
             if (elementType == typeof(string))
             {
                 ApplyInValues(query, column, (IEnumerable<string>)value, mode);
+            }
+            else if (elementType == typeof(Guid))
+            {
+                ApplyGuidInValues(query, column, (IEnumerable<Guid>)value, mode);
             }
             else if (elementType == typeof(int))
             {

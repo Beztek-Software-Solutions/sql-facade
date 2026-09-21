@@ -111,7 +111,7 @@ var filter = new Filter()
 | `Relation` | Meaning |
 |------------|---------|
 | `EqualTo`, `GreaterThan`, `LessThan`, … | Comparison |
-| `In` | Value in list or subquery (`WithSqlIn`) |
+| `In` | Value in list or subquery (`WithSqlIn`). Lists may be `string`, numeric, or `Guid` / `Guid[]` / `List<Guid>`. **Postgres** and **SQL Server** bind `Guid` natively (`uuid` / `uniqueidentifier`); **SQLite and all other engines** fall back to invariant `D`-format text (e.g. `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). |
 | `NullValue` / negation | IS NULL / IS NOT NULL |
 | `TrueValue` | Raw boolean (`WithIsRaw()`) |
 | `Exists` | Subquery exists (`WithSqlExists`) |
