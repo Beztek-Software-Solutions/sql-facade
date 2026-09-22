@@ -23,6 +23,8 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(SqlRelation.Union.Value, Is.EqualTo("Union"));
             Assert.That(SqlRelation.UnionAll, Is.EqualTo(SqlRelation.UnionAll));
             Assert.That(SqlRelation.Except, Is.Not.EqualTo(SqlRelation.Intersect));
+            Assert.That(SqlRelation.Union.Equals("nope"), Is.False);
+            Assert.That(SqlRelation.Union.GetHashCode(), Is.EqualTo(SqlRelation.Union.GetHashCode()));
         }
 
         [Test]
@@ -31,6 +33,8 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(LogicalRelation.And.Value, Is.EqualTo("And"));
             Assert.That(LogicalRelation.Or, Is.EqualTo(LogicalRelation.Or));
             Assert.That(LogicalRelation.AndNot, Is.Not.EqualTo(LogicalRelation.OrNot));
+            Assert.That(LogicalRelation.And.Equals(42), Is.False);
+            Assert.That(LogicalRelation.And.GetHashCode(), Is.EqualTo(LogicalRelation.And.GetHashCode()));
         }
 
         [Test]
@@ -39,6 +43,8 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(Relation.EqualTo.ToString(), Is.EqualTo("="));
             Assert.That(Relation.In, Is.EqualTo(Relation.In));
             Assert.That(Relation.Contains, Is.Not.EqualTo(Relation.StartsWith));
+            Assert.That(Relation.In.Equals("nope"), Is.False);
+            Assert.That(Relation.In.GetHashCode(), Is.EqualTo(Relation.In.GetHashCode()));
         }
 
         [Test]

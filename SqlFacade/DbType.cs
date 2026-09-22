@@ -6,6 +6,9 @@ namespace Beztek.Facade.Sql
     {
         POSTGRES,
         SQLITE,
-        SQLSERVER
+        SQLSERVER,
+        MYSQL,
+        MARIADB,
+        ORACLE
     }
 }

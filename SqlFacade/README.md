@@ -4,7 +4,7 @@
 
 `Beztek.Facade.Sql` is a database-portable SQL facade for .NET. Services build queries with typed objects (`SqlSelect`, `SqlInsert`, …) instead of hand-written SQL strings; the library compiles them per dialect via SQLKata and executes with Dapper.
 
-Use SQLite for offline development and switch to PostgreSQL or SQL Server in production by changing `SqlFacadeConfig` only.
+Use SQLite for offline development and switch to PostgreSQL, SQL Server, MySQL, MariaDB, or Oracle in production by changing `SqlFacadeConfig` only.
 
 ## Core API (`ISqlFacade`)
 
@@ -56,9 +56,38 @@ var config = new SqlFacadeConfig(
 ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
 ```
 
+### MySQL
+
+```csharp
+var config = new SqlFacadeConfig(
+    DbType.MYSQL,
+    "Server=localhost;Port=3306;Database=mydb;User ID=app;Password=secret");
+ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
+```
+
+### MariaDB
+
+Use `DbType.MARIADB` even though the wire protocol/driver matches MySQL — NestedList JSON nesting is compiled differently (see [Dialect quirks](#dialect-quirks)).
+
+```csharp
+var config = new SqlFacadeConfig(
+    DbType.MARIADB,
+    "Server=localhost;Port=3306;Database=mydb;User ID=app;Password=secret");
+ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
+```
+
+### Oracle
+
+```csharp
+var config = new SqlFacadeConfig(
+    DbType.ORACLE,
+    "User Id=app;Password=secret;Data Source=localhost:1521/XEPDB1");
+ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
+```
+
 ### Transaction isolation
 
-Every call runs inside a `TransactionScope`. `SqlFacadeConfig.TransactionIsolationLevel` controls isolation (default **ReadCommitted**). Set `Serializable` only when callers truly need serializable semantics.
+Every call runs inside a `TransactionScope` with **`TransactionScopeOption.Required`** — it joins an ambient outer scope when one exists, otherwise it creates one. `SqlFacadeConfig.TransactionIsolationLevel` controls isolation (default **ReadCommitted**). Set `Serializable` only when callers truly need serializable semantics.
 
 ```csharp
 var config = new SqlFacadeConfig(DbType.POSTGRES, connectionString)
@@ -67,7 +96,16 @@ var config = new SqlFacadeConfig(DbType.POSTGRES, connectionString)
 };
 ```
 
-For nested application transactions, wrap your code in an outer `TransactionScope`; the facade uses `RequiresNew` when a scope is already active.
+To commit or roll back several facade calls together, wrap them in an outer scope (the facade joins it):
+
+```csharp
+using var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+sql.ExecuteSqlWrite(...);
+sql.GetResults<T>(...);
+scope.Complete();
+```
+
+File-backed SQLite is opened on each call like the other engines. **Microsoft.Data.Sqlite does not implement ambient `EnlistTransaction`**, so file SQLite does not join `TransactionScope` the way Postgres/SQL Server/MySQL/Oracle do. In-memory SQLite keeps a shared connection alive for the process (required so `:memory:` survives across calls) and is not re-enlisted on every call.
 
 ## Query model
 
@@ -111,7 +149,7 @@ var filter = new Filter()
 | `Relation` | Meaning |
 |------------|---------|
 | `EqualTo`, `GreaterThan`, `LessThan`, … | Comparison |
-| `In` | Value in list or subquery (`WithSqlIn`). Lists may be `string`, numeric, or `Guid` / `Guid[]` / `List<Guid>`. **Postgres** and **SQL Server** bind `Guid` natively (`uuid` / `uniqueidentifier`); **SQLite and all other engines** fall back to invariant `D`-format text (e.g. `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). |
+| `In` | Value in list or subquery (`WithSqlIn`). Lists may be `string`, numeric, or `Guid` / `Guid[]` / `List<Guid>`. **Postgres** and **SQL Server** bind `Guid` natively (`uuid` / `uniqueidentifier`); **SQLite, MySQL, MariaDB, Oracle** fall back to invariant `D`-format text (e.g. `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). |
 | `NullValue` / negation | IS NULL / IS NOT NULL |
 | `TrueValue` | Raw boolean (`WithIsRaw()`) |
 | `Exists` | Subquery exists (`WithSqlExists`) |
@@ -239,9 +277,12 @@ For 1:N child collections on a parent row, attach a child **`SqlSelect`** via `W
 
 | Engine | Aggregate SQL |
 |--------|---------------|
-| **Postgres** | `json_agg(row_to_json(...))` (typed `json`, not `::text`) |
-| **SQLite** | `json_group_array(json_object(...))` |
-| **SQL Server** | child `SELECT … FOR JSON PATH, INCLUDE_NULL_VALUES` |
+| **Postgres** | `json_agg(row_to_json(...))` via `json_build_array()` empty fallback |
+| **SQLite** | `json_group_array(json_object(...))` with `json(...)` for grandchildren |
+| **SQL Server** | `JSON_QUERY((… FOR JSON PATH …))` |
+| **MySQL** | `JSON_ARRAYAGG(JSON_OBJECT(…))` with `CAST(… AS JSON)` for grandchildren |
+| **MariaDB** | Same shape, `JSON_EXTRACT(…, '$')` for grandchildren (not the MySQL cast) |
+| **Oracle** | `JSON_SERIALIZE(JSON_ARRAYAGG(… ORDER BY … RETURNING CLOB))` |
 
 ```csharp
 public class OrderRow
@@ -284,11 +325,95 @@ Inspect dialect SQL without executing:
 
 ```csharp
 string pgSql = nestedList.ToSql(DbType.POSTGRES);
+string mysqlSql = nestedList.ToSql(DbType.MYSQL);
+string mariaSql = nestedList.ToSql(DbType.MARIADB);
+string oracleSql = nestedList.ToSql(DbType.ORACLE);
 ```
+
+See the aggregate table above for per-engine NestedList shapes (including empty-array and grandchild handling).
 
 ### Type mapping notes
 
 `NestedListMapper` parses JSON child arrays with flexible converters for `DateTime` (offset-less SQLite/Postgres text treated as UTC), `DateOnly`, `bool`, and `decimal`. Parent scalar columns map to DTO properties by name (case-insensitive).
+
+## Dialect quirks
+
+Structural SQL (identifier quoting, `LIMIT`/`OFFSET`, placeholders) comes from SQLKata. The following are **facade-specific or engine gotchas** to plan for when choosing an engine or writing app dialect helpers.
+
+### Minimum versions (practical floors)
+
+| Engine | Suggested floor | Why |
+|--------|-----------------|-----|
+| MySQL | **8.0.31+** | CTEs (8.0+); `EXCEPT` / `INTERSECT` (8.0.31+); NestedList needs `JSON_ARRAYAGG` / `JSON_OBJECT` |
+| MariaDB | **10.5+** (10.3+ for set ops) | CTEs earlier; `EXCEPT` / `INTERSECT` from 10.3; NestedList JSON nesting fixes behave best on recent 10.5/10.6+ |
+| Oracle | **19c+** | `JSON_OBJECT` / `JSON_ARRAYAGG` with `RETURNING CLOB` / `FORMAT JSON`; SqlKata uses `OFFSET … FETCH` (12c+) |
+
+Older servers may compile SQL that fails at runtime.
+
+### NestedList / JSON gotchas (verified live)
+
+- **SqlKata `SelectRaw` mangles `[]`**: a literal empty JSON array in NestedList SQL becomes `""` when embedded via `SelectRaw`. Postgres uses `json_build_array()`; SQL Server / Oracle use `CHR(91)||CHR(93)` (or `CHAR(91)+CHAR(93)`); SQLite/MySQL/MariaDB use `json_array()` / `JSON_ARRAY()`.
+- **MariaDB rejects outer refs in derived tables**: NestedList aggregates over the child `FROM`/`WHERE` directly (no `FROM (subquery) AS _j`). MySQL often tolerates the derived-table form; MariaDB does not — another reason `DbType.MARIADB` must stay separate.
+- **SQL Server nested `FOR JSON`**: grandchild NestedLists wrap with `JSON_QUERY(...)` so nested arrays stay JSON inside the parent `FOR JSON PATH` (otherwise they become escaped strings).
+- **Oracle NestedList**: `ORDER BY` must sit inside `JSON_ARRAYAGG(... ORDER BY ...)`; a trailing `ORDER BY` on the scalar subquery is `ORA-00907`. Results are `JSON_SERIALIZE(... RETURNING VARCHAR2)`; empty arrays use `CHR(91)||CHR(93)`. Correlate identifiers are dialect-quoted (`"ch"."parent_id" = "p"."id"`).
+- NestedList returns serialized JSON text to Dapper for `NestedListMapper` (Oracle via `JSON_SERIALIZE`; others as JSON/text columns).
+- **`GetPagedResults(..., retrieveTotalNumResults: true)`**: the count path strips `ORDER BY` / NestedLists before wrapping in a CTE — SQL Server rejects `ORDER BY` inside that CTE without `TOP`/`OFFSET`.
+
+### MySQL vs MariaDB (do not collapse them)
+
+| Topic | MySQL | MariaDB |
+|-------|-------|---------|
+| SQLKata compiler | `MySqlCompiler` (backticks, `LIMIT`) | **Same** compiler |
+| `DbType` | `MYSQL` | **`MARIADB`** — pick this deliberately |
+| JSON column type | Native binary `JSON` | Alias for `LONGTEXT` + validation |
+| NestedList grandchildren | `CAST(col AS JSON)` inside `JSON_OBJECT` | `JSON_EXTRACT(col, '$')` so nested arrays are not double-escaped |
+| Replication / dumps | Binary JSON not interchangeable with MariaDB `JSON` without conversion | Treat as text JSON |
+
+**Watch out:** pointing a MariaDB instance at `DbType.MYSQL` (or the reverse) will often “work” for flat queries and then silently corrupt **grandchild NestedList** JSON (escaped string instead of array). Always match `DbType` to the real server.
+
+### Oracle
+
+- Pagination uses `OFFSET n ROWS FETCH NEXT m ROWS ONLY` (SqlKata). Queries without `ORDER BY` may get a synthetic order for safe fetch.
+- Multi-row `INSERT` can compile to Oracle `INSERT ALL … SELECT 1 FROM DUAL`.
+- NestedList returns serialized JSON text; prefer `JSON_SERIALIZE` / text mapping over assuming a native JSON CLR type from ODP.NET.
+- Prefer `CHAR(36)` / `VARCHAR2(36)` for Guid columns if you use `Relation.In` with `Guid` lists (text bind).
+- Container / CI images (`gvenzl/oracle-xe`, etc.) are heavier and slower than MySQL/Postgres — budget cold-start time for live tests.
+
+### Guid / UUID columns
+
+| Engine | `Relation.In` with `Guid` / `Guid[]` |
+|--------|--------------------------------------|
+| Postgres | Native `uuid` bind |
+| SQL Server | Native `uniqueidentifier` bind |
+| SQLite, MySQL, MariaDB, Oracle | Invariant `D`-format text (`aaaaaaaa-…`) |
+
+Store UUID text consistently (`CHAR(36)` / `TEXT`) on the text engines, or convert explicitly in schema.
+
+### Set operators and CTEs
+
+`SqlCombine` supports `Union`, `UnionAll`, `Except`, `Intersect`. Availability:
+
+- **Postgres / SQLite / SQL Server**: generally fine on supported versions.
+- **MySQL**: `EXCEPT` / `INTERSECT` only from 8.0.31; prefer `Union`/`UnionAll` if you must support older 8.0.
+- **MariaDB**: set ops from 10.3+.
+- **Oracle**: historically `MINUS` instead of `EXCEPT`; SqlKata emits standard operators — verify against your Oracle version / compatibility settings.
+
+Count-via-CTE (`GetTotalNumResults`) needs CTE support on the target engine (see floors above).
+
+### Transactions
+
+Every facade call wraps a `TransactionScope` with `Required` (joins an ambient outer scope) and enlists the ADO.NET connection where the provider supports it. **SQLite (Microsoft.Data.Sqlite) does not support ambient enlistment** — file connections are still opened; the in-memory keep-alive connection is shared across calls. MySqlConnector and ODP.NET Managed support ambient transactions, but:
+
+- Distributed/`TransactionScope` + MySQL/MariaDB can require extra server/XA configuration depending on environment.
+- Prefer an explicit outer `TransactionScope` in application code when coordinating multiple facade calls.
+
+### Packages pulled in by the library
+
+Adding MySQL/MariaDB/Oracle increases the NuGet dependency surface (`MySqlConnector`, `Oracle.ManagedDataAccess.Core`) even if your app only uses SQLite. That is intentional so one package can target any supported engine. Dapper arrives **transitively** via `SqlKata.Execution` (pinned there; not always the newest Dapper on NuGet).
+
+### What the facade does *not* unify
+
+Boolean literals, `NOW()` / `SYSDATE` / `UTC_TIMESTAMP()`, casts, `DateOnly` culture formatting, and NestedList-safe scalar selects still belong in an **application dialect helper** — see below.
 
 ## Dialect compilation (`GetSql`)
 
@@ -301,124 +426,150 @@ string bound = sql.GetSql(select, isParameterized: true);  // @p0, @p1, …
 
 ## Application dialect helpers
 
-This facade lets you run **integration-style unit tests against SQLite in-memory** while deploying against Postgres or SQL Server. Point `SqlFacadeConfig` at `:memory:` (or a temp file), flip an application dialect helper to the SQLite branch, and exercise the same SQL generators, filters, NestedList mapping, and write paths your services use in production — without a real database in CI.
+This facade lets you run **integration-style unit tests against SQLite in-memory** while deploying against any supported engine. Point `SqlFacadeConfig` at `:memory:` (or a temp file), set the app helper’s `Engine` to `DbType.SQLITE`, and exercise the same SQL generators, filters, NestedList mapping, and write paths your services use in production — without a real database in CI.
 
-SQLKata (via this facade) already handles **structural** dialect differences: identifier quoting, `LIMIT`/`OFFSET`, parameterized placeholders, and similar. What it does **not** unify are **expression-level** fragments that still differ across engines — boolean literals, `NOW()`, type casts, date binding for `DateOnly`, NestedList-safe JSON column selects, PostGIS vs plain lat/lon columns, and so on.
+SQLKata (via this facade) already handles **structural** dialect differences: identifier quoting, `LIMIT`/`OFFSET`, parameterized placeholders, and similar. What it does **not** unify are **expression-level** fragments — boolean literals, `NOW()`, type casts, `DateOnly` writes, NestedList-safe JSON column selects, UUID text projection, PostGIS vs plain lat/lon, and so on.
 
-Those belong in an **application-owned dialect helper** (not in this library). Keep a static `SqlDialect` next to your SQL generators: configure it once from the same `DbType` used to create `ISqlFacade`, then call it whenever a query needs a dialect-specific fragment. The helper is the map between the **deployed** engine and **SQLite under test** — production code stays dialect-agnostic at the call site; only the helper emits the right fragment.
+Those belong in an **application-owned dialect helper** (not in this library). AnchoredLove, Grasp, and MemoryMark each keep a static `SqlDialect` next to their SQL generators; all three today are **Postgres deploy / SQLite test** (`UseSqlite` bool). The consolidated sample below upgrades that pattern to a `DbType Engine` switch so the same generators can target MySQL, MariaDB, SQL Server, or Oracle as well. A runnable copy lives in [`SqlFacade.Example/ExampleSqlDialect.cs`](../SqlFacade.Example/ExampleSqlDialect.cs).
 
-### Why a helper
+### Why a helper (and why it stays in the app)
 
 | Layer | Responsibility |
 |-------|----------------|
-| `SqlFacade` / SQLKata | Compile `SqlSelect` / `SqlInsert` / … into Postgres, SQL Server, or SQLite SQL |
+| `SqlFacade` / SQLKata | Compile `SqlSelect` / `SqlInsert` / … into dialect SQL for each `DbType` |
 | App `SqlDialect` | Emit engine-specific **raw expressions**, **bind values**, and **Field** helpers used *inside* those query objects |
 
-Without a helper, every SQL generator sprouts `if (sqlite) … else …` branches. Centralizing them keeps generators readable and makes “SQLite for tests / Postgres (or SQL Server) for deploy” a single flag instead of scattered conditionals.
-
-Typical flow:
-
-1. Production starts with `DbType.POSTGRES` (or `SQLSERVER`) and `SqlDialect` on the matching branch.
-2. The test fixture sets `DbType.SQLITE` + `SqlDialect.UseSqlite = true`, creates tables (often a SQLite-friendly subset of the production schema), and runs the same generators/services.
-3. Where engines diverge (casts, bools, timestamps, geography), the helper supplies the SQLite equivalent so assertions hit a real connection — not mocks of SQL.
+**Should this live in the NuGet library?** Generally **no**. The shared core (bools, casts, timestamps, NestedList field factories, Guid/DateOnly writes) is small and stable, but real apps also carry **domain-specific** helpers — PostGIS `ST_X` / WKT (MemoryMark, AnchoredLove), HTML-escaped concat, schema prefixes (`app.` in Grasp), `AsyncLocal` overrides for parallel tests, and product-specific date rules. Baking those into `Beztek.Facade.Sql` would either omit what apps need or pull every product concern into the package. Prefer: copy the sample into each API (or a thin shared internal package owned by your org), keep it next to SQL generators, and align `Engine` with `SqlFacadeConfig.DbType` at startup.
 
 ### Process
 
-1. **Pick the facade dialect** when creating `SqlFacadeConfig` (`DbType.POSTGRES`, `SQLITE`, or `SQLSERVER`).
-2. **Mirror that choice** on the app helper at startup (and in test fixtures).
+1. **Pick the facade dialect** when creating `SqlFacadeConfig`.
+2. **Set `SqlDialect.Engine` to the same `DbType`** (and in test fixtures set both to `SQLITE`).
 3. **Use the helper in SQL generators** for any fragment that is not portable.
-4. **Keep NestedList columns JSON-safe** via helper field factories (casts to text / CASE for bools) so `NestedListMapper` can deserialize reliably.
+4. **Keep NestedList columns JSON-safe** via helper field factories so `NestedListMapper` can deserialize reliably.
 5. **Prefer invariant string forms for writes** when SqlKata would otherwise culture-format a type (e.g. `DateOnly` → `yyyy-MM-dd`).
 
-### Skeleton
+### Consolidated skeleton (`DbType` switch)
+
+Union of the helpers used in AnchoredLove / Grasp / MemoryMark, extended for all facade engines. Trim methods you do not need; add PostGIS / schema helpers in the app.
 
 ```csharp
 public static class SqlDialect
 {
-    // Set once from config / environment (Postgres default; flip for SQLite tests/local).
-    public static bool UseSqlite { get; set; }
+    // Set once from SqlFacadeConfig.DbType (Postgres default in the sample).
+    public static DbType Engine { get; set; } = DbType.POSTGRES;
 
-    public static string Now =>
-        UseSqlite ? "datetime('now')" : "now()";
+    public static string Now => Engine switch
+    {
+        DbType.SQLITE => "datetime('now')",
+        DbType.SQLSERVER => "SYSUTCDATETIME()",
+        DbType.MYSQL or DbType.MARIADB => "UTC_TIMESTAMP()",
+        DbType.ORACLE => "SYS_EXTRACT_UTC(SYSTIMESTAMP)",
+        _ => "now()"
+    };
 
-    public static object BooleanValue(bool value) =>
-        UseSqlite ? (value ? 1 : 0) : value;
+    public static object BooleanValue(bool value) => Engine switch
+    {
+        DbType.SQLITE or DbType.MYSQL or DbType.MARIADB or DbType.ORACLE => value ? 1 : 0,
+        _ => value // Postgres + SQL Server
+    };
 
-    public static string CastToText(string expression) =>
-        UseSqlite ? $"CAST({expression} AS TEXT)" : $"{expression}::text";
+    public static string Boolean(bool value) => Engine switch
+    {
+        DbType.POSTGRES => value ? "true" : "false",
+        _ => value ? "1" : "0"
+    };
 
-    public static string CastToBool(string column) =>
-        UseSqlite ? $"CASE WHEN {column} THEN 1 ELSE 0 END" : column;
+    public static object DateOnlyField(DateOnly value) =>
+        value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    public static bool CastToBoolIsRaw => UseSqlite;
+    public static string CastToText(string expression) => Engine switch
+    {
+        DbType.SQLITE => $"CAST({expression} AS TEXT)",
+        DbType.MYSQL or DbType.MARIADB => $"CAST({expression} AS CHAR)",
+        DbType.SQLSERVER => $"CAST({expression} AS nvarchar(max))",
+        DbType.ORACLE => $"TO_CHAR({expression})",
+        _ => $"{expression}::text"
+    };
 
-    // NestedList / NestedListMapper-safe select fields
+    public static string CastToInt(string expression) => Engine switch
+    {
+        DbType.SQLITE => $"CAST({expression} AS INTEGER)",
+        DbType.MYSQL or DbType.MARIADB => $"CAST({expression} AS SIGNED)",
+        DbType.SQLSERVER => $"CAST({expression} AS int)",
+        DbType.ORACLE => $"TO_NUMBER({expression})",
+        _ => $"{expression}::int"
+    };
+
+    public static string CastToBool(string column) => Engine == DbType.POSTGRES
+        ? column
+        : $"CASE WHEN {column} THEN 1 ELSE 0 END";
+
+    public static bool CastToBoolIsRaw => Engine != DbType.POSTGRES;
+
+    public static object UuidValue(Guid value) =>
+        Engine is DbType.POSTGRES or DbType.SQLSERVER ? value : value.ToString("D");
+
     public static Field NestedListBool(string column, string alias) =>
         new Field(CastToBool(column), alias, CastToBoolIsRaw);
 
-    public static Field NestedListDate(string column, string alias) =>
-        new Field(UseSqlite ? $"CAST(date({column}) AS TEXT)" : $"({column})::text", alias, isRaw: true);
+    public static Field NestedListInt(string column, string alias) =>
+        new Field(CastToInt(column), alias, isRaw: true);
 
-    // Writes: always ISO date text so SqlKata does not culture-format DateOnly
-    public static object DateOnlyField(DateOnly value) =>
-        value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    public static Field NestedListDate(string column, string alias) =>
+        new Field(/* engine-specific date→text — see ExampleSqlDialect */, alias, isRaw: true);
+
+    public static Field NestedListTimestamptz(string column, string alias) =>
+        new Field(/* engine-specific timestamptz→text — see ExampleSqlDialect */, alias, isRaw: true);
 }
 ```
 
 ### Wire-up
 
 ```csharp
-// Application startup (match SqlFacadeConfig.DbType)
-SqlDialect.UseSqlite = dbType == DbType.SQLITE;
-
+// Application startup
+SqlDialect.Engine = dbType; // same DbType as SqlFacadeConfig
 ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(dbType, connectionString));
-```
 
-```csharp
-// Test fixture — same in-memory SQLite as the facade under test
-SqlDialect.UseSqlite = true;
+// Test fixture
+SqlDialect.Engine = DbType.SQLITE;
 ```
 
 ### Usage in SQL generators
 
 ```csharp
-// Filter / write values
 .WithExpression(new Expression("is_active", SqlDialect.BooleanValue(true)))
-.WithField(new Field("is_deleted", SqlDialect.BooleanValue(false)))
 .WithField(new Field("occurrence_date", SqlDialect.DateOnlyField(date)))
-
-// Raw timestamp comparisons
 .WithRawExpression($"updated_at >= {SqlDialect.Now}")
-
-// NestedList child fields (JSON-safe across Postgres and SQLite)
 .WithField(SqlDialect.NestedListBool("li.is_active", "isActive"))
-.WithField(SqlDialect.NestedListDate("li.ship_date", "shipDate"))
-
-// Dialect-specific raw predicates (e.g. write-behind etag gates)
-var raw = SqlDialect.UseSqlite
-    ? "(etag IS NULL OR etag NOT GLOB '[0-9]*' OR CAST(etag AS INTEGER) < ?)"
-    : "(etag IS NULL OR etag !~ '^[0-9]+$' OR CAST(etag AS BIGINT) < ?)";
-update.WithFilter(new Expression(raw, new object[] { incomingSeq }).WithIsRaw());
+.WithField(SqlDialect.NestedListTimestamptz("li.shipped_at", "shippedAt"))
+.WithField(new Field("id", SqlDialect.UuidValue(id)))
 ```
 
 ### Typical helper surface
 
-| Concern | Postgres | SQLite (typical) |
-|---------|----------|------------------|
-| Current timestamp | `now()` | `datetime('now')` |
-| Boolean bind / literal | `true` / `false` | `1` / `0` |
-| Cast to text | `expr::text` | `CAST(expr AS TEXT)` |
-| Bool in NestedList JSON | column as-is | `CASE WHEN col THEN 1 ELSE 0 END` |
-| Date in NestedList JSON | `(col)::text` | `CAST(date(col) AS TEXT)` |
-| `DateOnly` write value | invariant `yyyy-MM-dd` string | same (avoids culture-formatted literals) |
-| Geography / extensions | PostGIS `ST_X` / WKT | separate `longitude` / `latitude` columns |
+| Concern | Postgres | SQLite | MySQL / MariaDB | SQL Server | Oracle |
+|---------|----------|--------|-----------------|------------|--------|
+| Current timestamp | `now()` | `datetime('now')` | `UTC_TIMESTAMP()` | `SYSUTCDATETIME()` | `SYS_EXTRACT_UTC(SYSTIMESTAMP)` |
+| Boolean bind | `true`/`false` | `1`/`0` | `1`/`0` | `bool`/`bit` | `1`/`0` |
+| Cast to text | `expr::text` | `CAST(… AS TEXT)` | `CAST(… AS CHAR)` | `CAST(… AS nvarchar)` | `TO_CHAR(…)` |
+| Bool in NestedList | column as-is | `CASE … 1/0` | `CASE … 1/0` | `CASE … 1/0` | `CASE … 1/0` |
+| Guid write / `IN` | native `Guid` | `D`-format text | `D`-format text | native `Guid` | `D`-format text |
+| `DateOnly` write | invariant `yyyy-MM-dd` | same | same | same | same |
 
-Extend the helper as your schema needs (SQL Server branches, schema-qualified names, etc.). Keep **one** process-wide setting aligned with `SqlFacadeConfig.DbType` so generators never hard-code an engine.
+**App-only extensions** (keep out of the shared sample): PostGIS `ST_X` / `POINT(lon lat)` vs `longitude`/`latitude` columns (MemoryMark, AnchoredLove); schema-qualified table names; regex / `GLOB` etag predicates; HTML entity escaping in concat.
 
 ## Testing
 
-Unit tests use **SQLite in-memory** (`Data Source=:memory:`) for full runtime coverage without external databases. Dialect-specific SQL (Postgres, SQL Server, `NestedList.ToSql`) is verified via `GetSql` / `ToSql` compilation tests — no cloud DB credentials required in CI.
+Unit tests use **SQLite in-memory** (`Data Source=:memory:`) for full runtime coverage without external databases. Dialect-specific SQL for every `DbType` (including MySQL, MariaDB, Oracle NestedList wraps) is verified via `GetSql` / `ToSql` compilation tests — no cloud DB credentials required in CI.
 
-When you adopt an application `SqlDialect`, set it to SQLite in the test fixture (and to Postgres when asserting compiled Postgres SQL). The sample project [`SqlFacade.Example`](../SqlFacade.Example/Program.cs) exercises inserts, updates, deletes, filters, joins, derived tables, CTEs, set operations, group/having, pagination, JSON round-trip, and nested lists.
+Optional **live container** tests live under `SqlFacade.Tests/Live/` (Testcontainers). They are discovered only when `SQLFACADE_LIVE_ENGINES` is set. Prefer **Podman** (auto-detected socket; no `docker` CLI). See the repo [README](../README.md#live-container-tests).
+
+```bash
+SQLFACADE_LIVE_ENGINES=postgres dotnet test --filter Category=Live   # one engine
+SQLFACADE_LIVE_ENGINES=all      dotnet test --filter Category=Live   # every engine
+```
+
+When you adopt an application `SqlDialect`, set `Engine = DbType.SQLITE` in the test fixture (and to the deploy engine when asserting compiled SQL). The sample project [`SqlFacade.Example`](../SqlFacade.Example/Program.cs) exercises inserts, updates, deletes, filters, joins, derived tables, CTEs, set operations, group/having, pagination, JSON round-trip, and nested lists, and prints multi-engine `GetSql` / `NestedList.ToSql` / dialect-helper samples.
 
 XML documentation is included in the NuGet package (`GenerateDocumentationFile`).

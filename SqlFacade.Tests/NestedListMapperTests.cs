@@ -125,6 +125,51 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(mapped.CreatedAt.Kind, Is.EqualTo(DateTimeKind.Utc));
         }
 
+        [Test]
+        public void ParseList_FlexibleJsonTokens_Deserializes()
+        {
+            // Covers Flexible*Converter Read paths used for NestedList JSON columns.
+            string json = """
+                [{
+                  "active": 1,
+                  "optionalActive": null,
+                  "amount": "9.99",
+                  "optionalAmount": null,
+                  "when": "2026-07-31T12:00:00+00:00",
+                  "optionalWhen": null,
+                  "day": "2026-07-31",
+                  "optionalDay": null,
+                  "grandchildren": [{"id":"g1"}]
+                }]
+                """;
+            var list = (List<FlexibleChildDto>)NestedListMapper.ParseList(typeof(FlexibleChildDto), json);
+
+            Assert.That(list.Count, Is.EqualTo(1));
+            Assert.That(list[0].Active, Is.True);
+            Assert.That(list[0].OptionalActive, Is.Null);
+            Assert.That(list[0].Amount, Is.EqualTo(9.99m));
+            Assert.That(list[0].OptionalAmount, Is.Null);
+            Assert.That(list[0].When.Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(list[0].OptionalWhen, Is.Null);
+            Assert.That(list[0].Day, Is.EqualTo(new DateOnly(2026, 7, 31)));
+            Assert.That(list[0].OptionalDay, Is.Null);
+            Assert.That(list[0].Grandchildren, Has.Count.EqualTo(1));
+            Assert.That(list[0].Grandchildren[0].Id, Is.EqualTo("g1"));
+        }
+
+        private sealed class FlexibleChildDto
+        {
+            public bool Active { get; set; }
+            public bool? OptionalActive { get; set; }
+            public decimal Amount { get; set; }
+            public decimal? OptionalAmount { get; set; }
+            public DateTime When { get; set; }
+            public DateTime? OptionalWhen { get; set; }
+            public DateOnly Day { get; set; }
+            public DateOnly? OptionalDay { get; set; }
+            public List<ChildDto> Grandchildren { get; set; }
+        }
+
         private sealed class NullableScalars
         {
             public string Id { get; set; }

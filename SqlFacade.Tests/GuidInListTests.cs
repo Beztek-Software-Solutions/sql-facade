@@ -128,15 +128,26 @@ namespace Beztek.Facade.Sql.Test
                 new SqlFacadeConfig(SqlDbType.POSTGRES, "Host=localhost;Database=x;Username=x;Password=x"));
             ISqlFacade sqlServer = SqlFacadeFactory.GetSqlFacade(
                 new SqlFacadeConfig(SqlDbType.SQLSERVER, "Server=localhost;Database=x;Trusted_Connection=True;"));
+            ISqlFacade mysql = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(SqlDbType.MYSQL, "Server=localhost;Database=x;User ID=x;Password=x"));
+            ISqlFacade oracle = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(SqlDbType.ORACLE, "User Id=x;Password=x;Data Source=localhost:1521/XEPDB1"));
 
             string pgSql = postgres.GetSql(select, false);
             string msSql = sqlServer.GetSql(select, false);
+            string mySql = mysql.GetSql(select, false);
+            string oracleSql = oracle.GetSql(select, false);
 
             Assert.That(pgSql.ToUpperInvariant(), Does.Contain("IN"));
             Assert.That(msSql.ToUpperInvariant(), Does.Contain("IN"));
+            Assert.That(mySql.ToUpperInvariant(), Does.Contain("IN"));
+            Assert.That(oracleSql.ToUpperInvariant(), Does.Contain("IN"));
             // Native Guid binding still appears as the GUID text in non-parameterized SQL.
             Assert.That(pgSql, Does.Contain(IdAlpha.ToString("D")).Or.Contain(IdAlpha.ToString()));
             Assert.That(msSql, Does.Contain(IdAlpha.ToString("D")).Or.Contain(IdAlpha.ToString()));
+            // MySQL / Oracle bind D-format text (same as SQLite).
+            Assert.That(mySql, Does.Contain(IdAlpha.ToString("D")));
+            Assert.That(oracleSql, Does.Contain(IdAlpha.ToString("D")));
         }
 
         private sealed class EntityRow

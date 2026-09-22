@@ -7,7 +7,9 @@ namespace Beztek.Facade.Sql
     using System.Transactions;
     using Microsoft.Data.SqlClient;
     using Microsoft.Data.Sqlite;
+    using MySqlConnector;
     using Npgsql;
+    using Oracle.ManagedDataAccess.Client;
 
     public class SqlFacadeConfig
     {
@@ -64,6 +66,21 @@ namespace Beztek.Facade.Sql
                 conn.EnlistTransaction(Transaction.Current);
                 return conn;
             }
+            else if (DbType == DbType.MYSQL || DbType == DbType.MARIADB)
+            {
+                // MySqlConnector works for both MySQL and MariaDB wire protocols.
+                MySqlConnection conn = new MySqlConnection(this.ConnectionString);
+                conn.Open();
+                conn.EnlistTransaction(Transaction.Current);
+                return conn;
+            }
+            else if (DbType == DbType.ORACLE)
+            {
+                OracleConnection conn = new OracleConnection(this.ConnectionString);
+                conn.Open();
+                conn.EnlistTransaction(Transaction.Current);
+                return conn;
+            }
             else if (DbType == DbType.SQLITE)
             {
                 if (IsInMemorySqliteDB(this.ConnectionString))
@@ -73,11 +90,17 @@ namespace Beztek.Facade.Sql
                         inMemorySqliteConnection = new InMemorySqliteConnection(this.ConnectionString);
                         inMemorySqliteConnection.Open();
                     }
+                    // Shared keep-alive connection: do not re-enlist here — sequential
+                    // TransactionScopes reuse the same handle (Close is a no-op).
                     return inMemorySqliteConnection;
                 }
 
+                // Microsoft.Data.Sqlite does not implement EnlistTransaction (ambient
+                // System.Transactions). Open for parity with other engines; app code can still
+                // use connection.BeginTransaction() or rely on the facade's TransactionScope
+                // for non-distributed local work where the provider participates differently.
                 SqliteConnection conn = new SqliteConnection(this.ConnectionString);
-
+                conn.Open();
                 return conn;
             }
 

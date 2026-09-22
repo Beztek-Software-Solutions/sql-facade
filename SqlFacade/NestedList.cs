@@ -18,7 +18,8 @@ namespace Beztek.Facade.Sql
     /// </para>
     /// <para>
     /// Engines: Postgres (<c>json_agg(row_to_json(...))</c>), SQLite (<c>json_group_array(json_object(...))</c>),
-    /// SQL Server (<c>FOR JSON PATH</c>).
+    /// SQL Server (<c>FOR JSON PATH</c>), MySQL / MariaDB (<c>JSON_ARRAYAGG(JSON_OBJECT(...))</c> with
+    /// engine-specific nested-JSON handling), Oracle (<c>JSON_ARRAYAGG(JSON_OBJECT(... FORMAT JSON))</c>).
     /// </para>
     /// </summary>
     public class NestedList
@@ -96,7 +97,7 @@ namespace Beztek.Facade.Sql
         public string ToSql(DbType dbType)
         {
             Validate();
-            SqlSelect effective = SelectForCompile();
+            SqlSelect effective = SelectForCompile(dbType);
             string innerSql = CompileChildSelect(dbType, effective);
             return Wrap(dbType, innerSql, effective);
         }
@@ -105,14 +106,14 @@ namespace Beztek.Facade.Sql
         /// Child select with correlation filter merged into <see cref="SqlSelect.Where"/>
         /// (does not mutate the stored <see cref="Select"/>).
         /// </summary>
-        internal SqlSelect SelectForCompile()
+        internal SqlSelect SelectForCompile(DbType dbType)
         {
             Validate();
 
             Filter where = new Filter();
             if (Select.Where != null)
                 where.WithFilter(Select.Where);
-            where.WithFilter(ToCorrelateFilter(Correlate));
+            where.WithFilter(ToCorrelateFilter(Correlate, dbType));
 
             return new SqlSelect
             {
@@ -130,6 +131,9 @@ namespace Beztek.Facade.Sql
             };
         }
 
+        /// <summary>Backward-compatible overload; defaults correlate quoting to SQLite/Postgres style.</summary>
+        internal SqlSelect SelectForCompile() => SelectForCompile(DbType.SQLITE);
+
         internal static string Wrap(DbType dbType, string innerSql, SqlSelect childSelect)
         {
             if (string.IsNullOrWhiteSpace(innerSql))
@@ -139,11 +143,14 @@ namespace Beztek.Facade.Sql
                 DbType.POSTGRES => WrapPostgres(innerSql),
                 DbType.SQLITE => WrapSqlite(innerSql, childSelect),
                 DbType.SQLSERVER => WrapSqlServer(innerSql),
+                DbType.MYSQL => WrapMySql(innerSql, childSelect),
+                DbType.MARIADB => WrapMariaDb(innerSql, childSelect),
+                DbType.ORACLE => WrapOracle(innerSql, childSelect),
                 _ => throw new ArgumentException($"Unsupported DbType for NestedList: {dbType}")
             };
         }
 
-        internal static Filter ToCorrelateFilter(Filter correlate)
+        internal static Filter ToCorrelateFilter(Filter correlate, DbType dbType)
         {
             if (correlate == null)
                 throw new ArgumentNullException(nameof(correlate));
@@ -154,7 +161,7 @@ namespace Beztek.Facade.Sql
                 foreach (Expression expression in correlate.Expressions)
                 {
                     if (expression != null)
-                        result.WithExpression(ToCorrelateWhere(expression));
+                        result.WithExpression(ToCorrelateWhere(expression, dbType));
                 }
             }
             if (correlate.Filters != null)
@@ -162,13 +169,16 @@ namespace Beztek.Facade.Sql
                 foreach (Filter nested in correlate.Filters)
                 {
                     if (nested != null)
-                        result.WithFilter(ToCorrelateFilter(nested));
+                        result.WithFilter(ToCorrelateFilter(nested, dbType));
                 }
             }
             return result;
         }
 
-        internal static Expression ToCorrelateWhere(Expression correlate)
+        internal static Filter ToCorrelateFilter(Filter correlate) =>
+            ToCorrelateFilter(correlate, DbType.SQLITE);
+
+        internal static Expression ToCorrelateWhere(Expression correlate, DbType dbType)
         {
             if (correlate == null)
                 throw new ArgumentNullException(nameof(correlate));
@@ -194,11 +204,33 @@ namespace Beztek.Facade.Sql
                     $"Correlate does not support Relation.{relation.Value}; use comparison operators (=, <, >, …) or a raw Expression.");
             }
 
-            string right = correlate.Value.ToString().Trim();
-            string raw = $"{correlate.Name.Trim()} {relation} {right}";
+            string left = QuoteCorrelateIdent(correlate.Name.Trim(), dbType);
+            string right = QuoteCorrelateIdent(correlate.Value.ToString().Trim(), dbType);
+            string raw = $"{left} {relation} {right}";
             return new Expression(raw, Array.Empty<object>())
                 .WithIsRaw()
                 .WithLogicalRelation(correlate.LogicalRelation ?? LogicalRelation.And);
+        }
+
+        internal static Expression ToCorrelateWhere(Expression correlate) =>
+            ToCorrelateWhere(correlate, DbType.SQLITE);
+
+        private static string QuoteCorrelateIdent(string name, DbType dbType)
+        {
+            // Leave complex/raw fragments alone.
+            if (name.IndexOfAny(new[] { ' ', '(', ')', '\'', ',', '+' }) >= 0)
+                return name;
+
+            string[] parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return dbType switch
+            {
+                DbType.MYSQL or DbType.MARIADB =>
+                    string.Join(".", parts.Select(p => "`" + p.Replace("`", "``") + "`")),
+                DbType.SQLSERVER =>
+                    string.Join(".", parts.Select(p => "[" + p.Replace("]", "]]") + "]")),
+                _ =>
+                    string.Join(".", parts.Select(p => "\"" + p.Replace("\"", "\"\"") + "\""))
+            };
         }
 
         private static Filter WrapCorrelate(Expression correlate)
@@ -249,6 +281,8 @@ namespace Beztek.Facade.Sql
                 DbType.SQLITE => "Data Source=:memory:",
                 DbType.POSTGRES => "Host=localhost;Database=x;Username=x;Password=x",
                 DbType.SQLSERVER => "Server=localhost;Database=x;Trusted_Connection=True;",
+                DbType.MYSQL or DbType.MARIADB => "Server=localhost;Database=x;User ID=x;Password=x",
+                DbType.ORACLE => "User Id=x;Password=x;Data Source=localhost:1521/XEPDB1",
                 _ => throw new ArgumentException($"Unsupported DbType: {dbType}")
             };
             ISqlFacade facade = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(dbType, connectionString));
@@ -260,7 +294,8 @@ namespace Beztek.Facade.Sql
         /// <c>row_to_json</c> to embed grandchild NestedList columns as JSON strings, which breaks mapping.
         /// </summary>
         private static string WrapPostgres(string innerSql) =>
-            "(SELECT COALESCE(json_agg(row_to_json(_j)), '[]'::json) FROM ("
+            // Avoid a literal '[]' — SqlKata SelectRaw mangles [] into "".
+            "(SELECT COALESCE(json_agg(row_to_json(_j)), json_build_array()) FROM ("
             + innerSql
             + ") AS _j)";
 
@@ -290,9 +325,146 @@ namespace Beztek.Facade.Sql
         }
 
         private static string WrapSqlServer(string innerSql) =>
-            "(SELECT COALESCE(("
+            // JSON_QUERY keeps nested NestedList columns typed as JSON inside FOR JSON PATH
+            // (otherwise SQL Server string-escapes grandchild arrays).
+            "JSON_QUERY((SELECT COALESCE(("
             + innerSql
-            + " FOR JSON PATH, INCLUDE_NULL_VALUES), CHAR(91)+CHAR(93)))";
+            + " FOR JSON PATH, INCLUDE_NULL_VALUES), CHAR(91)+CHAR(93))))";
+
+        /// <summary>
+        /// MySQL has a native binary JSON type: <c>CAST(... AS JSON)</c> keeps grandchild NestedList
+        /// columns typed so <c>JSON_OBJECT</c> embeds arrays instead of escaped strings.
+        /// Requires MySQL 8.0+ for reliable <c>JSON_ARRAYAGG</c> / CTE usage with this facade.
+        /// <para>
+        /// Aggregates over the child FROM/WHERE directly (no derived-table wrap) so outer
+        /// correlation works on both MySQL and MariaDB.
+        /// </para>
+        /// </summary>
+        private static string WrapMySql(string innerSql, SqlSelect childSelect) =>
+            WrapMySqlFamily(childSelect, DbType.MYSQL, nestedSql => $"CAST({nestedSql} AS JSON)");
+
+        /// <summary>
+        /// MariaDB's <c>JSON</c> is LONGTEXT-with-validation, not MySQL's binary JSON. Nested JSON
+        /// values lose "JSON-ness" and get double-escaped inside <c>JSON_OBJECT</c> unless re-parsed
+        /// via <c>JSON_EXTRACT(..., '$')</c>. Do not reuse the MySQL cast.
+        /// <para>
+        /// Same non-derived-table shape as MySQL — MariaDB rejects outer column refs inside
+        /// <c>FROM (subquery) AS _j</c>.
+        /// </para>
+        /// </summary>
+        private static string WrapMariaDb(string innerSql, SqlSelect childSelect) =>
+            WrapMySqlFamily(childSelect, DbType.MARIADB, nestedSql => $"JSON_EXTRACT({nestedSql}, '$')");
+
+        private static string WrapMySqlFamily(SqlSelect childSelect, DbType dbType, Func<string, string> nestJson)
+        {
+            IEnumerable<string> fieldArgs = (childSelect.Fields ?? Array.Empty<Field>()).Select(f =>
+            {
+                string key = JsonKeyFor(f);
+                // Use the SQL expression (e.g. ch.id), not an alias from a derived table.
+                string expr = string.IsNullOrWhiteSpace(f.Name) ? QuoteBacktickIdent(key) : f.Name.Trim();
+                return $"'{EscapeSqlString(key)}', {expr}";
+            });
+            IEnumerable<string> nestedArgs = (childSelect.NestedLists ?? Array.Empty<NestedList>())
+                .Where(n => n != null && !string.IsNullOrWhiteSpace(n.ResultAlias))
+                .Select(n =>
+                {
+                    string key = n.ResultAlias.Trim();
+                    string nestedSql = n.ToSql(dbType);
+                    return $"'{EscapeSqlString(key)}', {nestJson(nestedSql)}";
+                });
+            string objArgs = string.Join(", ", fieldArgs.Concat(nestedArgs));
+            if (string.IsNullOrWhiteSpace(objArgs))
+                throw new InvalidOperationException(
+                    "NestedList MySQL/MariaDB wrap requires at least one Field or NestedList on the child select.");
+
+            // Compile FROM/JOIN/WHERE/ORDER with a dummy select list, then replace the SELECT clause
+            // so correlation (e.g. p.id) stays at the same query level as JSON_ARRAYAGG.
+            SqlSelect shell = new SqlSelect
+            {
+                Table = childSelect.Table,
+                FromDerivedTable = childSelect.FromDerivedTable,
+                CommonTableExpressions = childSelect.CommonTableExpressions,
+                Joins = childSelect.Joins,
+                Where = childSelect.Where,
+                GroupBys = childSelect.GroupBys,
+                Having = childSelect.Having,
+                Sorts = childSelect.Sorts,
+                SqlCombines = childSelect.SqlCombines,
+                Fields = new List<Field> { new Field("1", "_x", isRaw: true) }
+            };
+            string shellSql = CompileChildSelect(dbType, shell);
+            int fromIdx = shellSql.IndexOf(" FROM ", StringComparison.OrdinalIgnoreCase);
+            if (fromIdx < 0)
+                throw new InvalidOperationException("Unable to compile MySQL/MariaDB NestedList FROM clause.");
+            string fromWhereOrder = shellSql.Substring(fromIdx);
+            return "(SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT(" + objArgs + ")), JSON_ARRAY())"
+                + fromWhereOrder + ")";
+        }
+
+        /// <summary>
+        /// Oracle 19c+ NestedList via <c>JSON_ARRAYAGG</c> + <c>JSON_SERIALIZE</c>.
+        /// Order goes inside <c>JSON_ARRAYAGG(... ORDER BY ...)</c> (trailing ORDER BY in a scalar
+        /// subquery is ORA-00907). Empty arrays use <c>CHR(91)||CHR(93)</c> so SqlKata cannot mangle <c>[]</c>.
+        /// </summary>
+        private static string WrapOracle(string innerSql, SqlSelect childSelect)
+        {
+            IEnumerable<string> fieldArgs = (childSelect.Fields ?? Array.Empty<Field>()).Select(f =>
+            {
+                string key = JsonKeyFor(f);
+                string expr = string.IsNullOrWhiteSpace(f.Name)
+                    ? QuoteDoubleIdent(key)
+                    : QuoteCorrelateIdent(f.Name.Trim(), DbType.ORACLE);
+                return $"'{EscapeSqlString(key)}' VALUE {expr}";
+            });
+            IEnumerable<string> nestedArgs = (childSelect.NestedLists ?? Array.Empty<NestedList>())
+                .Where(n => n != null && !string.IsNullOrWhiteSpace(n.ResultAlias))
+                .Select(n =>
+                {
+                    string key = n.ResultAlias.Trim();
+                    string nestedSql = n.ToSql(DbType.ORACLE);
+                    return $"'{EscapeSqlString(key)}' VALUE {nestedSql} FORMAT JSON";
+                });
+            string objArgs = string.Join(", ", fieldArgs.Concat(nestedArgs));
+            if (string.IsNullOrWhiteSpace(objArgs))
+                throw new InvalidOperationException(
+                    "NestedList Oracle wrap requires at least one Field or NestedList on the child select.");
+
+            string orderInsideAgg = "";
+            if (childSelect.Sorts != null && childSelect.Sorts.Count > 0)
+            {
+                var orderParts = childSelect.Sorts.Select(s =>
+                {
+                    string col = QuoteCorrelateIdent(s.Name.Trim(), DbType.ORACLE);
+                    return s.IsAscending ? col : col + " DESC";
+                });
+                orderInsideAgg = " ORDER BY " + string.Join(", ", orderParts);
+            }
+
+            // FROM/WHERE without ORDER BY (moved into JSON_ARRAYAGG).
+            SqlSelect shell = new SqlSelect
+            {
+                Table = childSelect.Table,
+                FromDerivedTable = childSelect.FromDerivedTable,
+                CommonTableExpressions = childSelect.CommonTableExpressions,
+                Joins = childSelect.Joins,
+                Where = childSelect.Where,
+                GroupBys = childSelect.GroupBys,
+                Having = childSelect.Having,
+                SqlCombines = childSelect.SqlCombines,
+                Fields = new List<Field> { new Field("1", "_x", isRaw: true) }
+            };
+            string shellSql = CompileChildSelect(DbType.ORACLE, shell);
+            int fromIdx = shellSql.IndexOf(" FROM ", StringComparison.OrdinalIgnoreCase);
+            if (fromIdx < 0)
+                throw new InvalidOperationException("Unable to compile Oracle NestedList FROM clause.");
+            string fromWhere = shellSql.Substring(fromIdx);
+            return "(SELECT COALESCE(JSON_SERIALIZE(JSON_ARRAYAGG(JSON_OBJECT("
+                + objArgs
+                + " NULL ON NULL RETURNING CLOB)"
+                + orderInsideAgg
+                + " NULL ON NULL RETURNING CLOB) RETURNING VARCHAR2(4000)), CHR(91)||CHR(93))"
+                + fromWhere + ")";
+        }
 
         internal static string JsonKeyFor(Field field)
         {
@@ -303,12 +475,28 @@ namespace Beztek.Facade.Sql
             return dot >= 0 ? name.Substring(dot + 1) : name;
         }
 
-        private static string EscapeSqliteString(string s) => s.Replace("'", "''");
+        private static string EscapeSqliteString(string s) => EscapeSqlString(s);
+
+        private static string EscapeSqlString(string s) => s.Replace("'", "''");
 
         private static string QuoteSqliteIdent(string ident)
         {
             if (ident.All(c => char.IsLetterOrDigit(c) || c == '_'))
                 return ident;
+            return "\"" + ident.Replace("\"", "\"\"") + "\"";
+        }
+
+        private static string QuoteBacktickIdent(string ident)
+        {
+            if (ident.All(c => char.IsLetterOrDigit(c) || c == '_'))
+                return ident;
+            return "`" + ident.Replace("`", "``") + "`";
+        }
+
+        private static string QuoteDoubleIdent(string ident)
+        {
+            if (ident.All(c => char.IsLetterOrDigit(c) || c == '_'))
+                return "\"" + ident + "\"";
             return "\"" + ident.Replace("\"", "\"\"") + "\"";
         }
     }

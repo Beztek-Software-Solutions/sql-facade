@@ -64,6 +64,42 @@ namespace Beztek.Facade.Sql.Test
         }
 
         [Test]
+        public void GetSql_MySql_CompilesWithBacktickIdentifiers()
+        {
+            ISqlFacade mysql = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(SqlDbType.MYSQL, "Server=localhost;Database=x;User ID=x;Password=x"));
+
+            string sql = mysql.GetSql(SampleSelect(), false);
+            Assert.That(sql, Does.Contain("`orders`").Or.Contain("orders"));
+            Assert.That(sql, Does.Contain("JOIN").IgnoreCase);
+            Assert.That(sql.ToUpperInvariant(), Does.Contain("LIMIT").Or.Contain("OFFSET").Or.Contain("ORDER BY"));
+        }
+
+        [Test]
+        public void GetSql_MariaDb_SharesMySqlCompiler()
+        {
+            ISqlFacade maria = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(SqlDbType.MARIADB, "Server=localhost;Database=x;User ID=x;Password=x"));
+            ISqlFacade mysql = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(SqlDbType.MYSQL, "Server=localhost;Database=x;User ID=x;Password=x"));
+
+            string mariaSql = maria.GetSql(SampleSelect(), false);
+            string mysqlSql = mysql.GetSql(SampleSelect(), false);
+            Assert.That(mariaSql, Is.EqualTo(mysqlSql));
+        }
+
+        [Test]
+        public void GetSql_Oracle_CompilesSelect()
+        {
+            ISqlFacade oracle = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(SqlDbType.ORACLE, "User Id=x;Password=x;Data Source=localhost:1521/XEPDB1"));
+
+            string sql = oracle.GetSql(SampleSelect(), false);
+            Assert.That(sql, Does.Contain("orders").IgnoreCase);
+            Assert.That(sql, Does.Contain("JOIN").IgnoreCase);
+        }
+
+        [Test]
         public void GetSql_Parameterized_UsesBindings()
         {
             ISqlFacade sqlite = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(SqlDbType.SQLITE, "Data Source=:memory:"));

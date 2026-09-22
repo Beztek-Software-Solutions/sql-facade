@@ -5,12 +5,19 @@ namespace Beztek.Facade.Sql
     using System.Collections.Generic;
 
     /// <summary>
-    /// SQL Utility class to execute SQL abstracted statements (ISql interface) against a relational database
-    /// 
-    /// Note: It is recommended that you nest all DB calls inside a TransactionScope. The way to use nested transactions is to
-    ///       prefix the following line at the place in the call stack above the section you want to become transactional
-    ///       "using TransactionScope transactionScope = new TransactionScope();"
-    ///       This will call a full rollback of everything inside the scope if there is an exception
+    /// SQL utility to execute abstracted statements (<see cref="ISql"/>) against a relational database.
+    /// <para>
+    /// Every public method runs inside a <see cref="System.Transactions.TransactionScope"/> with
+    /// <see cref="System.Transactions.TransactionScopeOption.Required"/> (joins an ambient outer
+    /// scope when one exists). Wrap multiple facade calls in an outer scope to commit or roll them
+    /// back together:
+    /// </para>
+    /// <code>
+    /// using var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+    /// sql.ExecuteSqlWrite(...);
+    /// sql.GetResults&lt;T&gt;(...);
+    /// scope.Complete();
+    /// </code>
     /// </summary>
     public interface ISqlFacade
     {
@@ -37,14 +44,14 @@ namespace Beztek.Facade.Sql
         public int GetTotalNumResults(SqlSelect sqlQuery);
 
         /// <summary>
-        /// 
+        /// Returns a page of results for the query.
         /// </summary>
         /// <typeparam name="T">the Generic of the object type to be returned in the PagedResults</typeparam>
         /// <param name="sqlQuery">the query to be executed</param>
         /// <param name="pageNum">the page number requested, starting with 1</param>
-        /// <param name="pageSize">The size of the page. This will also obvously be the maximum number of results retrievable for this page.</param>
+        /// <param name="pageSize">The size of the page. This will also obviously be the maximum number of results retrievable for this page.</param>
         /// <param name="retrieveTotalNumResults">Flags whether to also get the total number of results in all the pages</param>
-        /// <returns>a PagedResults object, or a PagedResultWithTotal, depending on if the flag retrieveTotalNumResults is not set, or set respectively</returns>
+        /// <returns>a PagedResults object, or a PagedResultsWithTotal, depending on if the flag retrieveTotalNumResults is not set, or set respectively</returns>
         public PagedResults<T> GetPagedResults<T>(SqlSelect sqlQuery, int pageNum, int pageSize, bool retrieveTotalNumResults = false);
 
         /// <summary>
@@ -58,17 +65,18 @@ namespace Beztek.Facade.Sql
         public T GetSingleResult<T>(SqlSelect sqlQuery);
 
         /// <summary>
-        /// Executes the given ISql statement (SqlUpdate, SqlCreate or SqlDelete)
+        /// Executes the given write statement (<see cref="SqlInsert"/>, <see cref="SqlUpdate"/>, or <see cref="SqlDelete"/>).
         /// </summary>
-        /// <param name="sqlWrite">is the ISql statement (SqlUpdate, SqlCreate or SqlDelete)</param>
+        /// <param name="sqlWrite">the write statement to execute</param>
         /// <returns>the number of rows affected by this write operation</returns>
         public int ExecuteSqlWrite(ISqlWrite sqlWrite);
 
         /// <summary>
-        /// Executes the given list ISqlWrite statements (SqlUpdate, SqlCreate or SqlDelete) sequentially in the same transaction
+        /// Executes the given write statements (<see cref="SqlInsert"/>, <see cref="SqlUpdate"/>, or <see cref="SqlDelete"/>)
+        /// sequentially in the same transaction.
         /// </summary>
-        /// <param name="sqlWriteList">A list if ISqlWrite objects</param>
-        /// <returns>the corresponding numbe of rows changed by each IsqlWrite operation in the input list</returns>
+        /// <param name="sqlWriteList">A list of <see cref="ISqlWrite"/> objects</param>
+        /// <returns>the corresponding number of rows changed by each write operation in the input list</returns>
         public IList<int> ExecuteMultiSqlWrite(List<ISqlWrite> sqlWriteList);
 
         /// <summary>

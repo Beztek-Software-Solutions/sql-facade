@@ -55,8 +55,9 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(sql, Does.Contain("row_to_json"));
             Assert.That(sql, Does.Contain("FROM \"child\" AS \"ch\"").Or.Contain("FROM child AS ch"));
             Assert.That(sql, Does.Contain("ORDER BY \"ch\".\"sort_ord\""));
-            Assert.That(sql, Does.Contain("'[]'::json"));
+            Assert.That(sql, Does.Contain("json_build_array()"));
             Assert.That(sql, Does.Not.Contain("json_agg(row_to_json(_j))::text"));
+            Assert.That(sql, Does.Not.Contain("'[]'"));
         }
 
         [Test]
@@ -83,9 +84,49 @@ namespace Beztek.Facade.Sql.Test
         {
             string sql = SampleNestedList().ToSql(SqlDbType.SQLSERVER);
             Assert.That(sql, Does.Contain("FOR JSON PATH, INCLUDE_NULL_VALUES"));
+            Assert.That(sql, Does.Contain("JSON_QUERY"));
             Assert.That(sql, Does.Contain("AS [id]").Or.Contain("AS id"));
             Assert.That(sql, Does.Contain("ORDER BY"));
             Assert.That(sql, Does.Contain("CHAR(91)+CHAR(93)"));
+        }
+
+        [Test]
+        public void ToSql_MySql_UsesJsonArrayAggAndCastNestedAsJson()
+        {
+            string sql = NestedChildWithTags().ToSql(SqlDbType.MYSQL);
+            Assert.That(sql, Does.Contain("JSON_ARRAYAGG"));
+            Assert.That(sql, Does.Contain("JSON_OBJECT"));
+            Assert.That(sql, Does.Contain("CAST("));
+            Assert.That(sql, Does.Contain("AS JSON)"));
+            Assert.That(sql, Does.Contain("JSON_ARRAY()"));
+            Assert.That(sql, Does.Contain("FROM"));
+            Assert.That(sql, Does.Not.Contain(" AS _j)"));
+            Assert.That(sql, Does.Not.Contain("JSON_EXTRACT"));
+        }
+
+        [Test]
+        public void ToSql_MariaDb_UsesJsonExtractForNestedJson()
+        {
+            string sql = NestedChildWithTags().ToSql(SqlDbType.MARIADB);
+            Assert.That(sql, Does.Contain("JSON_ARRAYAGG"));
+            Assert.That(sql, Does.Contain("JSON_OBJECT"));
+            Assert.That(sql, Does.Contain("JSON_EXTRACT("));
+            Assert.That(sql, Does.Contain(", '$')"));
+            Assert.That(sql, Does.Not.Contain(" AS _j)"));
+            Assert.That(sql, Does.Not.Contain("CAST("));
+        }
+
+        [Test]
+        public void ToSql_Oracle_UsesJsonArrayAggWithFormatJson()
+        {
+            string sql = NestedChildWithTags().ToSql(SqlDbType.ORACLE);
+            Assert.That(sql, Does.Contain("JSON_ARRAYAGG"));
+            Assert.That(sql, Does.Contain("JSON_OBJECT"));
+            Assert.That(sql, Does.Contain("FORMAT JSON"));
+            Assert.That(sql, Does.Contain("RETURNING CLOB"));
+            Assert.That(sql, Does.Contain("CHR(91)||CHR(93)"));
+            Assert.That(sql, Does.Contain("JSON_SERIALIZE"));
+            Assert.That(sql, Does.Not.Contain("'[]'"));
         }
 
         [Test]
@@ -113,6 +154,15 @@ namespace Beztek.Facade.Sql.Test
 
             var mssql = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(SqlDbType.SQLSERVER, "Server=localhost;Database=x;Trusted_Connection=True"));
             Assert.That(mssql.GetSql(select, false), Does.Contain("FOR JSON PATH"));
+
+            var mysql = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(SqlDbType.MYSQL, "Server=localhost;Database=x;User ID=x;Password=x"));
+            Assert.That(mysql.GetSql(select, false), Does.Contain("JSON_ARRAYAGG"));
+
+            var maria = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(SqlDbType.MARIADB, "Server=localhost;Database=x;User ID=x;Password=x"));
+            Assert.That(maria.GetSql(select, false), Does.Contain("JSON_ARRAYAGG"));
+
+            var oracle = SqlFacadeFactory.GetSqlFacade(new SqlFacadeConfig(SqlDbType.ORACLE, "User Id=x;Password=x;Data Source=localhost:1521/XEPDB1"));
+            Assert.That(oracle.GetSql(select, false), Does.Contain("JSON_ARRAYAGG"));
         }
 
         [Test]
@@ -286,8 +336,8 @@ namespace Beztek.Facade.Sql.Test
                 new Filter().WithExpression(new Expression("ch.parent_id", "p.id"))
                     .WithExpression(new Expression("ch.label", "p.name").WithLogicalRelation(LogicalRelation.Or)));
             string sql = agg.ToSql(SqlDbType.SQLITE);
-            Assert.That(sql, Does.Contain("ch.parent_id = p.id"));
-            Assert.That(sql, Does.Contain("ch.label = p.name"));
+            Assert.That(sql, Does.Contain("ch.parent_id = p.id").Or.Contain("\"ch\".\"parent_id\" = \"p\".\"id\""));
+            Assert.That(sql, Does.Contain("ch.label = p.name").Or.Contain("\"ch\".\"label\" = \"p\".\"name\""));
             Assert.That(sql.ToLowerInvariant(), Does.Contain(" or "));
         }
 
@@ -307,7 +357,7 @@ namespace Beztek.Facade.Sql.Test
         public void Correlate_JoinStyleExpression_EmitsColumnEqualsColumnWhere()
         {
             string sql = SampleNestedList().ToSql(SqlDbType.SQLITE);
-            Assert.That(sql, Does.Contain("ch.parent_id = p.id"));
+            Assert.That(sql, Does.Contain("ch.parent_id = p.id").Or.Contain("\"ch\".\"parent_id\" = \"p\".\"id\""));
             Assert.That(sql, Does.Contain("WHERE"));
         }
 

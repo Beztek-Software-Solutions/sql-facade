@@ -112,14 +112,14 @@ namespace Beztek.Facade.Sql
         /// <returns>The result of the execution</returns>
         private V ExecuteInTransaction<V>(object[] parameters, Func<QFactory, object[], V> func)
         {
-            var scopeOption = System.Transactions.Transaction.Current != null
-                ? TransactionScopeOption.RequiresNew
-                : TransactionScopeOption.Required;
             var transactionOptions = new TransactionOptions {
                 IsolationLevel = sqlFacadeConfig.TransactionIsolationLevel,
             };
+            // Always Required: join an ambient outer scope when present so app-level
+            // TransactionScope can roll back multiple facade calls together. (RequiresNew
+            // would commit each call independently and surprise callers.)
             using TransactionScope transactionScope = new TransactionScope(
-                scopeOption,
+                TransactionScopeOption.Required,
                 transactionOptions,
                 TransactionScopeAsyncFlowOption.Enabled);
 
@@ -167,7 +167,7 @@ namespace Beztek.Facade.Sql
             if (nestedList == null)
                 throw new ArgumentNullException(nameof(nestedList));
 
-            SqlSelect effective = nestedList.SelectForCompile();
+            SqlSelect effective = nestedList.SelectForCompile(sqlFacadeConfig.DbType);
             Query innerQuery = new Query();
             BuildSelectQuery(innerQuery, effective);
             string innerSql = QFactory.GetCompiler(sqlFacadeConfig.DbType).Compile(innerQuery).ToString();
@@ -223,8 +223,24 @@ namespace Beztek.Facade.Sql
         {
             SqlSelect sqlSelect = (SqlSelect)parameters[0];
 
-            // Create a new query to get the count
-            SqlSelect sqlSelectForCount = new SqlSelect(new CommonTableExpression(sqlSelect, "cte"))
+            // Count must not carry ORDER BY: SQL Server rejects ORDER BY inside the CTE/derived
+            // table used for counting unless TOP/OFFSET is also present. NestedLists are irrelevant
+            // to the row count and expensive to compile.
+            SqlSelect sqlSelectForCountSource = new SqlSelect
+            {
+                Table = sqlSelect.Table,
+                FromDerivedTable = sqlSelect.FromDerivedTable,
+                CommonTableExpressions = sqlSelect.CommonTableExpressions,
+                Fields = sqlSelect.Fields,
+                Joins = sqlSelect.Joins,
+                Where = sqlSelect.Where,
+                GroupBys = sqlSelect.GroupBys,
+                Having = sqlSelect.Having,
+                SqlCombines = sqlSelect.SqlCombines
+                // Sorts / NestedLists intentionally omitted
+            };
+
+            SqlSelect sqlSelectForCount = new SqlSelect(new CommonTableExpression(sqlSelectForCountSource, "cte"))
                 .WithField(new Field("count(*)", "Total", true));
 
             Query query = (XQuery)qFactory.Factory.Query();
@@ -323,7 +339,7 @@ namespace Beztek.Facade.Sql
                 }
             }
 
-            // Correlated child-list aggregates (Postgres / SQLite / SQL Server) → typed lists on parent
+            // Correlated child-list aggregates (all DbType NestedList wraps) → typed lists on parent
             if (sqlSelect.NestedLists != null)
             {
                 foreach (NestedList nestedList in sqlSelect.NestedLists)
@@ -671,7 +687,8 @@ namespace Beztek.Facade.Sql
         /// <summary>
         /// Binds GUID IN-list values per dialect: native <see cref="Guid"/> for Postgres
         /// (<c>uuid</c>) and SQL Server (<c>uniqueidentifier</c>); invariant <c>D</c>-format
-        /// strings for SQLite and any other engine that stores UUIDs as text.
+        /// strings for SQLite, MySQL, MariaDB, Oracle, and any other engine that stores UUIDs as text
+        /// (<c>CHAR(36)</c>, <c>VARCHAR</c>, etc.).
         /// </summary>
         private void ApplyGuidInValues<Q>(BaseQuery<Q> query, string column, IEnumerable<Guid> values, InClauseMode mode) where Q : BaseQuery<Q>
         {
@@ -681,7 +698,7 @@ namespace Beztek.Facade.Sql
             }
             else
             {
-                // SQLite and other engines: no native UUID type — bind as text.
+                // SQLite / MySQL / MariaDB / Oracle: no portable native UUID bind — use D-format text.
                 ApplyInValues(query, column, values.Select(g => g.ToString("D")), mode);
             }
         }

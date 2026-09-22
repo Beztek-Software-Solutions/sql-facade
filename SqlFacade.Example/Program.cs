@@ -30,10 +30,10 @@ namespace Beztek.Facade.Sql.Example
         {
             // -------------------------------------------------------------------------
             // Bootstrap: dialect helper + facade config
-            // Mirror UseSqlite with SqlFacadeConfig.DbType so generators and the facade agree.
-            // Production would set UseSqlite=false (or add SQL Server branches) from the same DbType.
+            // Mirror Engine with SqlFacadeConfig.DbType so generators and the facade agree.
+            // Production sets Engine to POSTGRES / MYSQL / …; tests flip to SQLITE.
             // -------------------------------------------------------------------------
-            ExampleSqlDialect.UseSqlite = true;
+            ExampleSqlDialect.Engine = Sql.DbType.SQLITE;
 
             var config = new SqlFacadeConfig(Sql.DbType.SQLITE, "Data Source=:memory:")
             {
@@ -43,7 +43,7 @@ namespace Beztek.Facade.Sql.Example
             sqlFacade = SqlFacadeFactory.GetSqlFacade(config);
 
             Console.WriteLine($"Config: DbType={config.DbType}, Isolation={config.TransactionIsolationLevel}");
-            Console.WriteLine($"ExampleSqlDialect.UseSqlite={ExampleSqlDialect.UseSqlite}, Now={ExampleSqlDialect.Now}");
+            Console.WriteLine($"ExampleSqlDialect.Engine={ExampleSqlDialect.Engine}, Now={ExampleSqlDialect.Now}");
             // Same API for file-backed SQLite: new SqlFacadeConfig(DbType.SQLITE, "Data Source=/tmp/app.db")
             Console.WriteLine("File-based SQLite uses the same API with e.g. Data Source=/tmp/app.db");
             Console.WriteLine();
@@ -521,6 +521,9 @@ namespace Beztek.Facade.Sql.Example
             Console.WriteLine($"        Postgres:   {strokes.ToSql(Sql.DbType.POSTGRES)}");
             Console.WriteLine($"        SQLite:     {strokes.ToSql(Sql.DbType.SQLITE)}");
             Console.WriteLine($"        SQL Server: {strokes.ToSql(Sql.DbType.SQLSERVER)}");
+            Console.WriteLine($"        MySQL:      {strokes.ToSql(Sql.DbType.MYSQL)}");
+            Console.WriteLine($"        MariaDB:    {strokes.ToSql(Sql.DbType.MARIADB)}");
+            Console.WriteLine($"        Oracle:     {strokes.ToSql(Sql.DbType.ORACLE)}");
             Console.WriteLine();
 
             foreach (CanvasWithStrokes row in sqlFacade.GetResults<CanvasWithStrokes>(sqlSelect))
@@ -597,12 +600,12 @@ namespace Beztek.Facade.Sql.Example
         }
 
         /// <summary>
-        /// Compile the same SqlSelect for SQLite / Postgres / SQL Server via GetSql (no live remote DB).
+        /// Compile the same SqlSelect for all supported dialects via GetSql (no live remote DB).
         /// Also shows flipping the app dialect helper between branches.
         /// </summary>
         private static void RunMultiDialectCompilationSamples()
         {
-            Console.WriteLine("Multi-dialect GetSql samples (compile only; no live Postgres/SQL Server connection):");
+            Console.WriteLine("Multi-dialect GetSql samples (compile only; no live remote connection):");
             var select = new SqlSelect(new Table("canvas", "v"))
                 .WithField(new Field("v.id", "Id"))
                 .WithField(new Field("v.color", "Color"))
@@ -614,18 +617,31 @@ namespace Beztek.Facade.Sql.Example
                 new SqlFacadeConfig(Sql.DbType.POSTGRES, "Host=localhost;Database=x;Username=x;Password=x"));
             ISqlFacade sqlServer = SqlFacadeFactory.GetSqlFacade(
                 new SqlFacadeConfig(Sql.DbType.SQLSERVER, "Server=localhost;Database=x;Trusted_Connection=True;"));
+            ISqlFacade mysql = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(Sql.DbType.MYSQL, "Server=localhost;Database=x;User ID=x;Password=x"));
+            ISqlFacade maria = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(Sql.DbType.MARIADB, "Server=localhost;Database=x;User ID=x;Password=x"));
+            ISqlFacade oracle = SqlFacadeFactory.GetSqlFacade(
+                new SqlFacadeConfig(Sql.DbType.ORACLE, "User Id=x;Password=x;Data Source=localhost:1521/XEPDB1"));
 
             Console.WriteLine($"      SQLite:     {sqlFacade.GetSql(select, false)}");
             Console.WriteLine($"      Postgres:   {postgres.GetSql(select, false)}");
             Console.WriteLine($"      SQL Server: {sqlServer.GetSql(select, false)}");
+            Console.WriteLine($"      MySQL:      {mysql.GetSql(select, false)}");
+            Console.WriteLine($"      MariaDB:    {maria.GetSql(select, false)}");
+            Console.WriteLine($"      Oracle:     {oracle.GetSql(select, false)}");
             Console.WriteLine();
 
             // Demonstrate helper branch output without changing the runtime SQLite facade.
-            bool previous = ExampleSqlDialect.UseSqlite;
-            ExampleSqlDialect.UseSqlite = false;
-            Console.WriteLine($"Dialect helper (Postgres branch): Now={ExampleSqlDialect.Now}, Bool(true)={ExampleSqlDialect.BooleanValue(true)}, CastToText(id)={ExampleSqlDialect.CastToText("id")}");
-            ExampleSqlDialect.UseSqlite = previous;
-            Console.WriteLine($"Dialect helper (SQLite branch):   Now={ExampleSqlDialect.Now}, Bool(true)={ExampleSqlDialect.BooleanValue(true)}, CastToText(id)={ExampleSqlDialect.CastToText("id")}");
+            var previous = ExampleSqlDialect.Engine;
+            ExampleSqlDialect.Engine = Sql.DbType.POSTGRES;
+            Console.WriteLine($"Dialect helper (Postgres): Now={ExampleSqlDialect.Now}, Bool(true)={ExampleSqlDialect.BooleanValue(true)}, CastToText(id)={ExampleSqlDialect.CastToText("id")}");
+            ExampleSqlDialect.Engine = Sql.DbType.MYSQL;
+            Console.WriteLine($"Dialect helper (MySQL):    Now={ExampleSqlDialect.Now}, Bool(true)={ExampleSqlDialect.BooleanValue(true)}, CastToText(id)={ExampleSqlDialect.CastToText("id")}");
+            ExampleSqlDialect.Engine = Sql.DbType.ORACLE;
+            Console.WriteLine($"Dialect helper (Oracle):   Now={ExampleSqlDialect.Now}, Bool(true)={ExampleSqlDialect.BooleanValue(true)}, CastToText(id)={ExampleSqlDialect.CastToText("id")}");
+            ExampleSqlDialect.Engine = previous;
+            Console.WriteLine($"Dialect helper (SQLite):   Now={ExampleSqlDialect.Now}, Bool(true)={ExampleSqlDialect.BooleanValue(true)}, CastToText(id)={ExampleSqlDialect.CastToText("id")}");
             Console.WriteLine();
         }
 

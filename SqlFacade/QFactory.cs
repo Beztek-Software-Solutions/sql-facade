@@ -38,13 +38,15 @@ namespace Beztek.Facade.Sql
 
         public static Compiler GetCompiler(DbType dbType)
         {
-            return _compilers.GetOrAdd(dbType, _ => {
-                return dbType switch {
-                    DbType.POSTGRES => new PostgresCompiler(),
-                    DbType.SQLSERVER => new SqlServerCompiler(),
-                    DbType.SQLITE => new SqliteCompiler(),
-                    _ => null
-                };
+            return _compilers.GetOrAdd(dbType, type => type switch
+            {
+                DbType.POSTGRES => new PostgresCompiler(),
+                DbType.SQLSERVER => new SqlServerCompiler(),
+                DbType.SQLITE => new SqliteCompiler(),
+                // MariaDB shares MySQL quoting / LIMIT; NestedList wraps differ (see NestedList.Wrap).
+                DbType.MYSQL or DbType.MARIADB => new MySqlCompiler(),
+                DbType.ORACLE => new OracleCompiler(),
+                _ => throw new ArgumentException($"{type} is not supported")
             });
         }
     }

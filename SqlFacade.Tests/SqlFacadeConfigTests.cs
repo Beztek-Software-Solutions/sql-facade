@@ -31,6 +31,14 @@ namespace Beztek.Facade.Sql.Test
         }
 
         [Test]
+        public void Equals_NonConfigObject_ReturnsFalse()
+        {
+            var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:");
+            Assert.That(config.Equals("not-a-config"), Is.False);
+            Assert.That(config.Equals(null), Is.False);
+        }
+
+        [Test]
         public void GetConnection_UnsupportedDbType_Throws()
         {
             var config = new SqlFacadeConfig((Beztek.Facade.Sql.DbType)999, "invalid");
@@ -46,9 +54,30 @@ namespace Beztek.Facade.Sql.Test
             {
                 var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, $"Data Source={path}");
                 using IDbConnection connection = config.GetConnection();
-                connection.Open();
 
                 Assert.That(connection, Is.InstanceOf<SqliteConnection>());
+                Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
+            }
+            finally
+            {
+                if (System.IO.File.Exists(path))
+                    System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void GetConnection_FileBasedSqlite_OpensUnderAmbientTransactionScope()
+        {
+            // Microsoft.Data.Sqlite does not support EnlistTransaction; GetConnection must still
+            // return an open connection when an ambient TransactionScope is present.
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sql-facade-enlist-{Guid.NewGuid():N}.db");
+            try
+            {
+                var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, $"Data Source={path}");
+                using var scope = new System.Transactions.TransactionScope(
+                    System.Transactions.TransactionScopeOption.Required,
+                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled);
+                using IDbConnection connection = config.GetConnection();
                 Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
             }
             finally

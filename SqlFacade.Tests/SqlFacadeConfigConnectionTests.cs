@@ -30,6 +30,36 @@ namespace Beztek.Facade.Sql.Test
             AssertProviderBranch(config);
         }
 
+        [Test]
+        public void GetConnection_MySql_ExecutesProviderBranch()
+        {
+            var config = new SqlFacadeConfig(
+                Beztek.Facade.Sql.DbType.MYSQL,
+                "Server=127.0.0.1;Port=1;Database=x;User ID=x;Password=x;Connection Timeout=1");
+
+            AssertProviderBranch(config);
+        }
+
+        [Test]
+        public void GetConnection_MariaDb_ExecutesProviderBranch()
+        {
+            var config = new SqlFacadeConfig(
+                Beztek.Facade.Sql.DbType.MARIADB,
+                "Server=127.0.0.1;Port=1;Database=x;User ID=x;Password=x;Connection Timeout=1");
+
+            AssertProviderBranch(config);
+        }
+
+        [Test]
+        public void GetConnection_Oracle_ExecutesProviderBranch()
+        {
+            var config = new SqlFacadeConfig(
+                Beztek.Facade.Sql.DbType.ORACLE,
+                "User Id=x;Password=x;Data Source=127.0.0.1:1/XEPDB1");
+
+            AssertProviderBranch(config);
+        }
+
         private static void AssertProviderBranch(SqlFacadeConfig config)
         {
             try
