@@ -156,23 +156,31 @@ namespace Beztek.Facade.Sql
                 throw new ArgumentNullException(nameof(correlate));
 
             Filter result = new Filter(correlate.LogicalRelation ?? LogicalRelation.And);
-            if (correlate.Expressions != null)
-            {
-                foreach (Expression expression in correlate.Expressions)
-                {
-                    if (expression != null)
-                        result.WithExpression(ToCorrelateWhere(expression, dbType));
-                }
-            }
-            if (correlate.Filters != null)
-            {
-                foreach (Filter nested in correlate.Filters)
-                {
-                    if (nested != null)
-                        result.WithFilter(ToCorrelateFilter(nested, dbType));
-                }
-            }
+            CopyCorrelateExpressions(correlate, result, dbType);
+            CopyCorrelateNestedFilters(correlate, result, dbType);
             return result;
+        }
+
+        private static void CopyCorrelateExpressions(Filter correlate, Filter result, DbType dbType)
+        {
+            if (correlate.Expressions == null)
+                return;
+            foreach (Expression expression in correlate.Expressions)
+            {
+                if (expression != null)
+                    result.WithExpression(ToCorrelateWhere(expression, dbType));
+            }
+        }
+
+        private static void CopyCorrelateNestedFilters(Filter correlate, Filter result, DbType dbType)
+        {
+            if (correlate.Filters == null)
+                return;
+            foreach (Filter nested in correlate.Filters)
+            {
+                if (nested != null)
+                    result.WithFilter(ToCorrelateFilter(nested, dbType));
+            }
         }
 
         internal static Filter ToCorrelateFilter(Filter correlate) =>
@@ -185,31 +193,47 @@ namespace Beztek.Facade.Sql
             if (correlate.IsRaw)
                 return correlate;
 
+            EnsureCorrelateColumns(correlate);
+            EnsureCorrelateRelationAllowed(correlate.Relation ?? Relation.EqualTo);
+
+            string left = QuoteCorrelateIdent(correlate.Name.Trim(), dbType);
+            string right = QuoteCorrelateIdent(correlate.Value.ToString().Trim(), dbType);
+            string raw = $"{left} {correlate.Relation ?? Relation.EqualTo} {right}";
+            return new Expression(raw, Array.Empty<object>())
+                .WithIsRaw()
+                .WithLogicalRelation(correlate.LogicalRelation ?? LogicalRelation.And);
+        }
+
+        private static void EnsureCorrelateColumns(Expression correlate)
+        {
             if (string.IsNullOrWhiteSpace(correlate.Name))
                 throw new InvalidOperationException("Correlate Expression.Name (left column) is required.");
             if (correlate.Value == null || string.IsNullOrWhiteSpace(correlate.Value.ToString()))
                 throw new InvalidOperationException(
                     "Correlate Expression.Value must be the right-hand column (Join.OnExpression semantics).");
+        }
 
-            Relation relation = correlate.Relation ?? Relation.EqualTo;
-            if (Object.Equals(relation, Relation.In)
-                || Object.Equals(relation, Relation.Exists)
-                || Object.Equals(relation, Relation.NullValue)
-                || Object.Equals(relation, Relation.TrueValue)
-                || Object.Equals(relation, Relation.StartsWith)
-                || Object.Equals(relation, Relation.EndsWith)
-                || Object.Equals(relation, Relation.Contains))
+        private static readonly Relation[] UnsupportedCorrelateRelations =
+        [
+            Relation.In,
+            Relation.Exists,
+            Relation.NullValue,
+            Relation.TrueValue,
+            Relation.StartsWith,
+            Relation.EndsWith,
+            Relation.Contains
+        ];
+
+        private static void EnsureCorrelateRelationAllowed(Relation relation)
+        {
+            foreach (Relation unsupported in UnsupportedCorrelateRelations)
             {
-                throw new InvalidOperationException(
-                    $"Correlate does not support Relation.{relation.Value}; use comparison operators (=, <, >, …) or a raw Expression.");
+                if (Object.Equals(relation, unsupported))
+                {
+                    throw new InvalidOperationException(
+                        $"Correlate does not support Relation.{relation.Value}; use comparison operators (=, <, >, …) or a raw Expression.");
+                }
             }
-
-            string left = QuoteCorrelateIdent(correlate.Name.Trim(), dbType);
-            string right = QuoteCorrelateIdent(correlate.Value.ToString().Trim(), dbType);
-            string raw = $"{left} {relation} {right}";
-            return new Expression(raw, Array.Empty<object>())
-                .WithIsRaw()
-                .WithLogicalRelation(correlate.LogicalRelation ?? LogicalRelation.And);
         }
 
         internal static Expression ToCorrelateWhere(Expression correlate) =>
@@ -253,6 +277,12 @@ namespace Beztek.Facade.Sql
 
         private void Validate()
         {
+            EnsureNestedListConfigured();
+            ValidateChildFields();
+        }
+
+        private void EnsureNestedListConfigured()
+        {
             if (string.IsNullOrWhiteSpace(ResultAlias))
                 throw new InvalidOperationException("NestedList.ResultAlias is required.");
             if (ElementType == null)
@@ -261,9 +291,14 @@ namespace Beztek.Facade.Sql
                 throw new InvalidOperationException("NestedList.Select (child SqlSelect) is required.");
             if (!HasCorrelate(Correlate))
                 throw new InvalidOperationException("NestedList.Correlate is required.");
+        }
+
+        private void ValidateChildFields()
+        {
             if (Select.Fields == null || Select.Fields.Count == 0)
                 throw new InvalidOperationException(
                     "NestedList child SqlSelect must have explicit Fields (alias = JSON property name).");
+
             foreach (Field field in Select.Fields)
             {
                 if (field == null || string.IsNullOrWhiteSpace(field.Name))
@@ -408,39 +443,59 @@ namespace Beztek.Facade.Sql
         /// </summary>
         private static string WrapOracle(string innerSql, SqlSelect childSelect)
         {
-            IEnumerable<string> fieldArgs = (childSelect.Fields ?? Array.Empty<Field>()).Select(f =>
-            {
-                string key = JsonKeyFor(f);
-                string expr = string.IsNullOrWhiteSpace(f.Name)
-                    ? QuoteDoubleIdent(key)
-                    : QuoteCorrelateIdent(f.Name.Trim(), DbType.ORACLE);
-                return $"'{EscapeSqlString(key)}' VALUE {expr}";
-            });
+            string objArgs = BuildOracleJsonObjectArgs(childSelect);
+            string orderInsideAgg = BuildOracleOrderInsideAgg(childSelect);
+            string fromWhere = CompileOracleFromWhere(childSelect);
+            return "(SELECT COALESCE(JSON_SERIALIZE(JSON_ARRAYAGG(JSON_OBJECT("
+                + objArgs
+                + " NULL ON NULL RETURNING CLOB)"
+                + orderInsideAgg
+                + " NULL ON NULL RETURNING CLOB) RETURNING VARCHAR2(4000)), CHR(91)||CHR(93))"
+                + fromWhere + ")";
+        }
+
+        private static string BuildOracleJsonObjectArgs(SqlSelect childSelect)
+        {
+            IEnumerable<string> fieldArgs = (childSelect.Fields ?? Array.Empty<Field>()).Select(OracleFieldArg);
             IEnumerable<string> nestedArgs = (childSelect.NestedLists ?? Array.Empty<NestedList>())
                 .Where(n => n != null && !string.IsNullOrWhiteSpace(n.ResultAlias))
-                .Select(n =>
-                {
-                    string key = n.ResultAlias.Trim();
-                    string nestedSql = n.ToSql(DbType.ORACLE);
-                    return $"'{EscapeSqlString(key)}' VALUE {nestedSql} FORMAT JSON";
-                });
+                .Select(OracleNestedArg);
             string objArgs = string.Join(", ", fieldArgs.Concat(nestedArgs));
             if (string.IsNullOrWhiteSpace(objArgs))
                 throw new InvalidOperationException(
                     "NestedList Oracle wrap requires at least one Field or NestedList on the child select.");
+            return objArgs;
+        }
 
-            string orderInsideAgg = "";
-            if (childSelect.Sorts != null && childSelect.Sorts.Count > 0)
+        private static string OracleFieldArg(Field f)
+        {
+            string key = JsonKeyFor(f);
+            string expr = string.IsNullOrWhiteSpace(f.Name)
+                ? QuoteDoubleIdent(key)
+                : QuoteCorrelateIdent(f.Name.Trim(), DbType.ORACLE);
+            return $"'{EscapeSqlString(key)}' VALUE {expr}";
+        }
+
+        private static string OracleNestedArg(NestedList n)
+        {
+            string key = n.ResultAlias.Trim();
+            return $"'{EscapeSqlString(key)}' VALUE {n.ToSql(DbType.ORACLE)} FORMAT JSON";
+        }
+
+        private static string BuildOracleOrderInsideAgg(SqlSelect childSelect)
+        {
+            if (childSelect.Sorts == null || childSelect.Sorts.Count == 0)
+                return "";
+            var orderParts = childSelect.Sorts.Select(s =>
             {
-                var orderParts = childSelect.Sorts.Select(s =>
-                {
-                    string col = QuoteCorrelateIdent(s.Name.Trim(), DbType.ORACLE);
-                    return s.IsAscending ? col : col + " DESC";
-                });
-                orderInsideAgg = " ORDER BY " + string.Join(", ", orderParts);
-            }
+                string col = QuoteCorrelateIdent(s.Name.Trim(), DbType.ORACLE);
+                return s.IsAscending ? col : col + " DESC";
+            });
+            return " ORDER BY " + string.Join(", ", orderParts);
+        }
 
-            // FROM/WHERE without ORDER BY (moved into JSON_ARRAYAGG).
+        private static string CompileOracleFromWhere(SqlSelect childSelect)
+        {
             SqlSelect shell = new SqlSelect
             {
                 Table = childSelect.Table,
@@ -457,13 +512,7 @@ namespace Beztek.Facade.Sql
             int fromIdx = shellSql.IndexOf(" FROM ", StringComparison.OrdinalIgnoreCase);
             if (fromIdx < 0)
                 throw new InvalidOperationException("Unable to compile Oracle NestedList FROM clause.");
-            string fromWhere = shellSql.Substring(fromIdx);
-            return "(SELECT COALESCE(JSON_SERIALIZE(JSON_ARRAYAGG(JSON_OBJECT("
-                + objArgs
-                + " NULL ON NULL RETURNING CLOB)"
-                + orderInsideAgg
-                + " NULL ON NULL RETURNING CLOB) RETURNING VARCHAR2(4000)), CHR(91)||CHR(93))"
-                + fromWhere + ")";
+            return shellSql.Substring(fromIdx);
         }
 
         internal static string JsonKeyFor(Field field)

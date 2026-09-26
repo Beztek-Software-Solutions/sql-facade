@@ -7,17 +7,17 @@ namespace Beztek.Facade.Sql.Example
     using Beztek.Facade.Sql;
 
     /// <summary>
-    /// Consolidated application dialect helper sketch (pattern used by AnchoredLove, Grasp, MemoryMark).
+    /// Consolidated application dialect helper sketch.
     /// <para>
     /// SQLKata (via SqlFacade) handles structural dialect differences. Expression-level fragments —
     /// <c>NOW()</c>, boolean binds, casts, NestedList-safe JSON fields, UUID text projection —
     /// stay in an app-owned helper keyed off the same <see cref="DbType"/> as <see cref="SqlFacadeConfig"/>.
     /// </para>
     /// <para>
-    /// Production APIs today typically deploy Postgres and flip to SQLite for tests. This sample
-    /// also branches MySQL, MariaDB, SQL Server, and Oracle so the same generators can target any
-    /// facade-supported engine. Domain-specific helpers (PostGIS geography, HTML-escaped concat,
-    /// schema prefixes) belong in the application, not this library.
+    /// Typical deployments use Postgres and flip to SQLite for tests. This sample also branches
+    /// MySQL, MariaDB, SQL Server, and Oracle so the same generators can target any facade-supported
+    /// engine. Domain-specific helpers (PostGIS geography, HTML-escaped concat, schema prefixes)
+    /// belong in the application, not this library.
     /// </para>
     /// </summary>
     public static class ExampleSqlDialect

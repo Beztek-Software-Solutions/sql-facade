@@ -47,64 +47,63 @@ namespace Beztek.Facade.Sql
 
         public virtual IDbConnection GetConnection()
         {
-            if (DbType == DbType.POSTGRES)
-            {
-                NpgsqlConnection conn = new NpgsqlConnection(this.ConnectionString);
-                conn.Open();
-
-                // Explicitly enlist the current transaction, to support transaction scoping
-                conn.EnlistTransaction(Transaction.Current);
-
-                return conn;
-            }
-            else if (DbType == DbType.SQLSERVER)
-            {
-                SqlConnection conn = new SqlConnection(this.ConnectionString);
-                conn.Open();
-
-                // Explicitly enlist the current transaction, to support transaction scoping
-                conn.EnlistTransaction(Transaction.Current);
-                return conn;
-            }
-            else if (DbType == DbType.MYSQL || DbType == DbType.MARIADB)
-            {
-                // MySqlConnector works for both MySQL and MariaDB wire protocols.
-                MySqlConnection conn = new MySqlConnection(this.ConnectionString);
-                conn.Open();
-                conn.EnlistTransaction(Transaction.Current);
-                return conn;
-            }
-            else if (DbType == DbType.ORACLE)
-            {
-                OracleConnection conn = new OracleConnection(this.ConnectionString);
-                conn.Open();
-                conn.EnlistTransaction(Transaction.Current);
-                return conn;
-            }
-            else if (DbType == DbType.SQLITE)
-            {
-                if (IsInMemorySqliteDB(this.ConnectionString))
-                {
-                    if (inMemorySqliteConnection == null)
-                    {
-                        inMemorySqliteConnection = new InMemorySqliteConnection(this.ConnectionString);
-                        inMemorySqliteConnection.Open();
-                    }
-                    // Shared keep-alive connection: do not re-enlist here — sequential
-                    // TransactionScopes reuse the same handle (Close is a no-op).
-                    return inMemorySqliteConnection;
-                }
-
-                // Microsoft.Data.Sqlite does not implement EnlistTransaction (ambient
-                // System.Transactions). Open for parity with other engines; app code can still
-                // use connection.BeginTransaction() or rely on the facade's TransactionScope
-                // for non-distributed local work where the provider participates differently.
-                SqliteConnection conn = new SqliteConnection(this.ConnectionString);
-                conn.Open();
-                return conn;
-            }
-
+            if (TryOpenServerConnection(out IDbConnection server))
+                return server;
+            if (DbType == DbType.SQLITE)
+                return OpenSqliteConnection();
             throw new ArgumentException(DbType + " is not supported");
+        }
+
+        private bool TryOpenServerConnection(out IDbConnection connection)
+        {
+            connection = DbType switch
+            {
+                DbType.POSTGRES => OpenAndEnlist(new NpgsqlConnection(ConnectionString)),
+                DbType.SQLSERVER => OpenAndEnlist(new SqlConnection(ConnectionString)),
+                // MySqlConnector works for both MySQL and MariaDB wire protocols.
+                DbType.MYSQL or DbType.MARIADB => OpenAndEnlist(new MySqlConnection(ConnectionString)),
+                DbType.ORACLE => OpenAndEnlist(new OracleConnection(ConnectionString)),
+                _ => null
+            };
+            return connection != null;
+        }
+
+        private IDbConnection OpenSqliteConnection()
+        {
+            if (IsInMemorySqliteDB(ConnectionString))
+                return GetOrOpenInMemorySqlite();
+
+            // Microsoft.Data.Sqlite does not implement EnlistTransaction (ambient
+            // System.Transactions). Open for parity with other engines; app code can still
+            // use connection.BeginTransaction() or rely on the facade's TransactionScope
+            // for non-distributed local work where the provider participates differently.
+            SqliteConnection conn = new SqliteConnection(ConnectionString);
+            conn.Open();
+            return conn;
+        }
+
+        private InMemorySqliteConnection GetOrOpenInMemorySqlite()
+        {
+            if (inMemorySqliteConnection == null)
+            {
+                inMemorySqliteConnection = new InMemorySqliteConnection(ConnectionString);
+                inMemorySqliteConnection.Open();
+            }
+            // Shared keep-alive connection: do not re-enlist here — sequential
+            // TransactionScopes reuse the same handle (Close is a no-op).
+            return inMemorySqliteConnection;
+        }
+
+        /// <summary>
+        /// Opens a server-backed connection and enlists the ambient transaction.
+        /// Covered by live engine tests; unit suites cannot reach Open without a listening server.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        private static T OpenAndEnlist<T>(T conn) where T : System.Data.Common.DbConnection
+        {
+            conn.Open();
+            conn.EnlistTransaction(Transaction.Current);
+            return conn;
         }
 
         // Internal

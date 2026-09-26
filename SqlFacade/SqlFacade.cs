@@ -272,196 +272,205 @@ namespace Beztek.Facade.Sql
 
         private Query BuildSelectQuery(Query query, SqlSelect sqlSelect)
         {
+            if (TryRewriteCombineWithOuterSort(query, sqlSelect, out Query rewritten))
+                return rewritten;
+
+            ApplySelectFrom(query, sqlSelect);
+            ApplySelectCtes(query, sqlSelect);
+            ApplySelectFields(query, sqlSelect);
+            ApplySelectNestedLists(query, sqlSelect);
+            ApplySelectWhere(query, sqlSelect);
+            ApplySelectJoins(query, sqlSelect);
+            ApplySelectGroupBys(query, sqlSelect);
+            ApplySelectHaving(query, sqlSelect);
+            ApplySelectCombines(query, sqlSelect);
+            ApplySelectSorts(query, sqlSelect);
+            return query;
+        }
+
+        private bool TryRewriteCombineWithOuterSort(Query query, SqlSelect sqlSelect, out Query rewritten)
+        {
             // SqlKata attaches OrderBy to the first UNION/INTERSECT/EXCEPT branch. When the select
             // has both combines and sorts, wrap as a derived table so ORDER BY applies to the result set.
-            if (sqlSelect.SqlCombines != null && sqlSelect.SqlCombines.Count > 0
-                && sqlSelect.Sorts != null && sqlSelect.Sorts.Count > 0)
-            {
-                List<Sort> sorts = sqlSelect.Sorts;
-                sqlSelect.Sorts = null;
-                try
-                {
-                    SqlSelect outer = new SqlSelect(new DerivedTable(sqlSelect, "_combine"));
-                    foreach (Sort sort in sorts)
-                    {
-                        outer = outer.WithSort(sort);
-                    }
-                    return BuildSelectQuery(query, outer);
-                }
-                finally
-                {
-                    sqlSelect.Sorts = sorts;
-                }
-            }
+            rewritten = null;
+            if (sqlSelect.SqlCombines == null || sqlSelect.SqlCombines.Count == 0
+                || sqlSelect.Sorts == null || sqlSelect.Sorts.Count == 0)
+                return false;
 
+            List<Sort> sorts = sqlSelect.Sorts;
+            sqlSelect.Sorts = null;
+            try
+            {
+                SqlSelect outer = new SqlSelect(new DerivedTable(sqlSelect, "_combine"));
+                foreach (Sort sort in sorts)
+                    outer = outer.WithSort(sort);
+                rewritten = BuildSelectQuery(query, outer);
+                return true;
+            }
+            finally
+            {
+                sqlSelect.Sorts = sorts;
+            }
+        }
+
+        private void ApplySelectFrom(Query query, SqlSelect sqlSelect)
+        {
             if (sqlSelect.Table != null)
             {
-                query.From(sqlSelect.Table.Alias == null ? sqlSelect.Table.Name : sqlSelect.Table.Name + " as " + sqlSelect.Table.Alias);
+                query.From(sqlSelect.Table.Alias == null
+                    ? sqlSelect.Table.Name
+                    : sqlSelect.Table.Name + " as " + sqlSelect.Table.Alias);
+                return;
             }
-            else if (sqlSelect.FromDerivedTable != null)
+
+            if (sqlSelect.FromDerivedTable != null)
             {
-                // Derived Table
-                Query derivedTable = BuildSelectQuery(new Query(), sqlSelect.FromDerivedTable.Select).As(sqlSelect.FromDerivedTable.Alias);
+                Query derivedTable = BuildSelectQuery(new Query(), sqlSelect.FromDerivedTable.Select)
+                    .As(sqlSelect.FromDerivedTable.Alias);
                 query.From(derivedTable);
             }
+        }
 
-            // Common Table Expressions
-            if (sqlSelect.CommonTableExpressions != null)
+        private void ApplySelectCtes(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.CommonTableExpressions == null)
+                return;
+
+            foreach (CommonTableExpression commonTableExpression in sqlSelect.CommonTableExpressions)
             {
-                foreach (CommonTableExpression commonTableExpression in sqlSelect.CommonTableExpressions)
+                if (commonTableExpression.RawSql != null)
                 {
-                    Query cte = new Query();
-                    if (commonTableExpression.RawSql != null)
-                    {
-                        query.WithRaw(commonTableExpression.Alias, commonTableExpression.RawSql);
-                    }
-                    else
-                    {
-                        BuildSelectQuery(cte, commonTableExpression.Select);
-                        query.With(commonTableExpression.Alias, cte);
-                    }
+                    query.WithRaw(commonTableExpression.Alias, commonTableExpression.RawSql);
+                    continue;
                 }
-            }
 
-            // Fields and Raw fields
-            if (sqlSelect.Fields != null)
+                Query cte = new Query();
+                BuildSelectQuery(cte, commonTableExpression.Select);
+                query.With(commonTableExpression.Alias, cte);
+            }
+        }
+
+        private static void ApplySelectFields(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.Fields == null)
+                return;
+
+            foreach (Field field in sqlSelect.Fields)
             {
-                foreach (Field field in sqlSelect.Fields)
-                {
-                    if (field.IsRaw)
-                    {
-                        query.SelectRaw(field.Name + " as " + field.Value);
-                    }
-                    else
-                    {
-                        query.Select(field.Value == null ? field.Name : field.Name + " as " + field.Value);
-                    }
-                }
+                if (field.IsRaw)
+                    query.SelectRaw(field.Name + " as " + field.Value);
+                else
+                    query.Select(field.Value == null ? field.Name : field.Name + " as " + field.Value);
             }
+        }
 
-            // Correlated child-list aggregates (all DbType NestedList wraps) → typed lists on parent
-            if (sqlSelect.NestedLists != null)
+        private void ApplySelectNestedLists(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.NestedLists == null)
+                return;
+
+            foreach (NestedList nestedList in sqlSelect.NestedLists)
             {
-                foreach (NestedList nestedList in sqlSelect.NestedLists)
-                {
-                    string subquery = BuildNestedListSubquery(nestedList);
-                    query.SelectRaw(subquery + " as " + nestedList.ResultAlias);
-                }
+                string subquery = BuildNestedListSubquery(nestedList);
+                query.SelectRaw(subquery + " as " + nestedList.ResultAlias);
             }
+        }
 
-            // Where clauses
+        private void ApplySelectWhere(Query query, SqlSelect sqlSelect)
+        {
             if (sqlSelect.Where != null)
-            {
                 query.Where(q => BuildFilter(q, sqlSelect.Where));
-            }
+        }
 
-            // Joins
-            if (sqlSelect.Joins != null)
+        private void ApplySelectJoins(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.Joins == null)
+                return;
+
+            foreach (Join join in sqlSelect.Joins)
+                ApplySelectJoin(query, join);
+        }
+
+        private void ApplySelectJoin(Query query, Join join)
+        {
+            SqlKata.Join sqlKataJoin = new SqlKata.Join();
+            sqlKataJoin.On(
+                join.OnExpression.Name,
+                UnwrapJsonValue(join.OnExpression.Value)?.ToString(),
+                join.OnExpression.Relation.ToString());
+
+            if (join.JoinExpressions != null)
             {
-                foreach (Join join in sqlSelect.Joins)
+                bool isFirst = true;
+                foreach (Expression joinExpression in join.JoinExpressions)
                 {
-                    SqlKata.Join sqlKataJoin = new SqlKata.Join();
-                    sqlKataJoin.On(join.OnExpression.Name, UnwrapJsonValue(join.OnExpression.Value)?.ToString(), join.OnExpression.Relation.ToString());
-                    if (join.JoinExpressions != null)
-                    {
-                        bool isFirst = true;
-                        foreach (Expression joinExpression in join.JoinExpressions)
-                        {
-                            this.AddExpression<SqlKata.Join>(sqlKataJoin, isFirst, joinExpression);
-                            isFirst = false;
-                        }
-                    }
-
-                    // Set the join type
-                    if (join.JoinTable != null)
-                    {
-                        if (Object.Equals(join.JoinType, JoinType.InnerJoin))
-                        {
-                            query.Join(join.JoinTable.Alias == null ? join.JoinTable.Name : join.JoinTable.Name + " as " + join.JoinTable.Alias, j => sqlKataJoin);
-                        }
-                        else if (Object.Equals(join.JoinType, JoinType.LeftJoin))
-                        {
-                            query.LeftJoin(join.JoinTable.Alias == null ? join.JoinTable.Name : join.JoinTable.Name + " as " + join.JoinTable.Alias, j => sqlKataJoin);
-                        }
-                    }
-                    else
-                    {
-                        // Derived Table joins or Common Table Expression joins
-                        if (Object.Equals(join.JoinType, JoinType.InnerJoin))
-                        {
-                            query.Join(join.JoinCTE.Alias, j => sqlKataJoin);
-                        }
-                        else if (Object.Equals(join.JoinType, JoinType.LeftJoin))
-                        {
-                            query.LeftJoin(join.JoinCTE.Alias, j => sqlKataJoin);
-                        }
-                    }
+                    AddExpression(sqlKataJoin, isFirst, joinExpression);
+                    isFirst = false;
                 }
             }
 
-            // Group By
-            if (sqlSelect.GroupBys != null)
-            {
-                foreach (GroupBy groupBy in sqlSelect.GroupBys)
-                {
-                    if (groupBy.IsRaw)
-                    {
-                        query.GroupByRaw(groupBy.Value);
-                    }
-                    else
-                    {
-                        query.GroupBy(groupBy.Value);
-                    }
-                }
-            }
+            string tableRef = join.JoinTable != null
+                ? (join.JoinTable.Alias == null
+                    ? join.JoinTable.Name
+                    : join.JoinTable.Name + " as " + join.JoinTable.Alias)
+                : join.JoinCTE.Alias;
 
-            // Having
+            if (Object.Equals(join.JoinType, JoinType.LeftJoin))
+                query.LeftJoin(tableRef, j => sqlKataJoin);
+            else
+                query.Join(tableRef, j => sqlKataJoin);
+        }
+
+        private static void ApplySelectGroupBys(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.GroupBys == null)
+                return;
+
+            foreach (GroupBy groupBy in sqlSelect.GroupBys)
+            {
+                if (groupBy.IsRaw)
+                    query.GroupByRaw(groupBy.Value);
+                else
+                    query.GroupBy(groupBy.Value);
+            }
+        }
+
+        private void ApplySelectHaving(Query query, SqlSelect sqlSelect)
+        {
             if (sqlSelect.Having != null)
-            {
                 query.Having(q => BuildFilter(q, sqlSelect.Having));
-            }
+        }
 
-            // Sql Combines (before OrderBy so UNION … ORDER BY is valid SQL)
-            if (sqlSelect.SqlCombines != null)
+        private void ApplySelectCombines(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.SqlCombines == null)
+                return;
+
+            foreach (SqlCombine sqlCombine in sqlSelect.SqlCombines)
             {
-                foreach (SqlCombine sqlCombine in sqlSelect.SqlCombines)
-                {
-                    if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.Union))
-                    {
-                        query.Union(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
-                    }
-                    else if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.UnionAll))
-                    {
-                        query.UnionAll(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
-                    }
-                    else if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.Intersect))
-                    {
-                        query.Intersect(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
-                    }
-                    else if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.Except))
-                    {
-                        query.Except(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
-                    }
-                }
+                if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.Union))
+                    query.Union(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
+                else if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.UnionAll))
+                    query.UnionAll(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
+                else if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.Intersect))
+                    query.Intersect(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
+                else if (Object.Equals(sqlCombine.SqlRelation, SqlRelation.Except))
+                    query.Except(q => BuildSelectQuery(q, sqlCombine.SqlSelect));
             }
+        }
 
-            // Order by clauses
-            if (sqlSelect.Sorts != null)
+        private static void ApplySelectSorts(Query query, SqlSelect sqlSelect)
+        {
+            if (sqlSelect.Sorts == null)
+                return;
+
+            foreach (Sort sort in sqlSelect.Sorts)
             {
-                foreach (Sort sort in sqlSelect.Sorts)
-                {
-                    if (sort.IsAscending)
-                    {
-                        query.OrderBy(sort.Name);
-                    }
-                    else
-                    {
-                        query.OrderByDesc(sort.Name);
-                    }
-                }
+                if (sort.IsAscending)
+                    query.OrderBy(sort.Name);
+                else
+                    query.OrderByDesc(sort.Name);
             }
-
-            return query;
         }
 
         private Query BuildFilter(Query query, Filter filter)
@@ -471,7 +480,7 @@ namespace Beztek.Facade.Sql
             {
                 foreach (Expression expression in filter.Expressions)
                 {
-                    this.AddExpression<Query>(query, isFirst, expression);
+                    AddExpression(query, isFirst, expression);
                     isFirst = false;
                 }
             }
@@ -480,66 +489,57 @@ namespace Beztek.Facade.Sql
             {
                 foreach (Filter nestedFilter in filter.Filters)
                 {
-                    if (isFirst)
-                    {
-                        query.Where(q => BuildFilter(q, nestedFilter));
-                        isFirst = false;
-                    }
-                    else
-                    {
-                        if (Object.Equals(filter.LogicalRelation, LogicalRelation.And))
-                        {
-                            query.Where(q => BuildFilter(q, nestedFilter));
-                        }
-                        else if (Object.Equals(filter.LogicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhere(q => BuildFilter(q, nestedFilter));
-                        }
-                        else if (Object.Equals(filter.LogicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereNot(q => BuildFilter(q, nestedFilter));
-                        }
-                        else if (Object.Equals(filter.LogicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNot(q => BuildFilter(q, nestedFilter));
-                        }
-                    }
+                    ApplyNestedFilter(query, filter, nestedFilter, ref isFirst);
                 }
             }
 
             return query;
         }
 
+        private void ApplyNestedFilter(Query query, Filter parent, Filter nestedFilter, ref bool isFirst)
+        {
+            if (isFirst)
+            {
+                query.Where(q => BuildFilter(q, nestedFilter));
+                isFirst = false;
+                return;
+            }
+
+            if (Object.Equals(parent.LogicalRelation, LogicalRelation.And))
+                query.Where(q => BuildFilter(q, nestedFilter));
+            else if (Object.Equals(parent.LogicalRelation, LogicalRelation.Or))
+                query.OrWhere(q => BuildFilter(q, nestedFilter));
+            else if (Object.Equals(parent.LogicalRelation, LogicalRelation.AndNot))
+                query.WhereNot(q => BuildFilter(q, nestedFilter));
+            else if (Object.Equals(parent.LogicalRelation, LogicalRelation.OrNot))
+                query.OrWhereNot(q => BuildFilter(q, nestedFilter));
+        }
+
         private static object UnwrapJsonValue(object value)
         {
             if (value == null || value is not JsonElement jsonElement)
-            {
                 return value;
-            }
+            return UnwrapJsonElement(jsonElement);
+        }
 
-            switch (jsonElement.ValueKind)
+        private static object UnwrapJsonElement(JsonElement jsonElement) =>
+            jsonElement.ValueKind switch
             {
-                case JsonValueKind.Null:
-                    return null;
-                case JsonValueKind.String:
-                    return jsonElement.GetString();
-                case JsonValueKind.True:
-                    return true;
-                case JsonValueKind.False:
-                    return false;
-                case JsonValueKind.Number:
-                    if (jsonElement.TryGetInt32(out int intValue))
-                    {
-                        return intValue;
-                    }
-                    if (jsonElement.TryGetInt64(out long longValue))
-                    {
-                        return longValue;
-                    }
-                    return jsonElement.GetDouble();
-                default:
-                    return value;
-            }
+                JsonValueKind.Null => null,
+                JsonValueKind.String => jsonElement.GetString(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number => UnwrapJsonNumber(jsonElement),
+                _ => jsonElement
+            };
+
+        private static object UnwrapJsonNumber(JsonElement jsonElement)
+        {
+            if (jsonElement.TryGetInt32(out int intValue))
+                return intValue;
+            if (jsonElement.TryGetInt64(out long longValue))
+                return longValue;
+            return jsonElement.GetDouble();
         }
 
         private static object ResolveExpressionValue(Expression expression)
@@ -716,387 +716,312 @@ namespace Beztek.Facade.Sql
 
             if (value is JsonElement jsonElement)
             {
-                if (jsonElement.ValueKind == JsonValueKind.Object)
-                {
-                    ApplyInSubquery(query, column, JsonSerializer.Deserialize<SqlSelect>(jsonElement.GetRawText()), mode);
-                    return;
-                }
-
-                if (jsonElement.ValueKind == JsonValueKind.Array)
-                {
-                    string json = jsonElement.GetRawText();
-                    if (IsStringJsonArray(jsonElement))
-                    {
-                        // Guid[] serializes to a string array; prefer Guid binding when every element parses.
-                        if (IsGuidJsonArray(jsonElement))
-                        {
-                            ApplyGuidInValues(query, column, JsonSerializer.Deserialize<IEnumerable<Guid>>(json), mode);
-                        }
-                        else
-                        {
-                            ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<string>>(json), mode);
-                        }
-                    }
-                    else
-                    {
-                        ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<double>>(json), mode);
-                    }
-
-                    return;
-                }
-
-                throw new ArgumentException($"Unsupported JsonElement value kind {jsonElement.ValueKind} for In expression");
+                ApplyInJsonElement(query, column, jsonElement, mode);
+                return;
             }
 
-            Type elementType = GetEnumerableElementType(value.GetType());
-            if (elementType == null)
+            ApplyInEnumerable(query, column, value, mode);
+        }
+
+        private void ApplyInJsonElement<Q>(BaseQuery<Q> query, string column, JsonElement jsonElement, InClauseMode mode)
+            where Q : BaseQuery<Q>
+        {
+            if (jsonElement.ValueKind == JsonValueKind.Object)
             {
-                throw new ArgumentException($"Unsupported In list value type {value.GetType()}");
+                ApplyInSubquery(query, column, JsonSerializer.Deserialize<SqlSelect>(jsonElement.GetRawText()), mode);
+                return;
             }
+
+            if (jsonElement.ValueKind != JsonValueKind.Array)
+                throw new ArgumentException($"Unsupported JsonElement value kind {jsonElement.ValueKind} for In expression");
+
+            string json = jsonElement.GetRawText();
+            if (!IsStringJsonArray(jsonElement))
+            {
+                ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<double>>(json), mode);
+                return;
+            }
+
+            // Guid[] serializes to a string array; prefer Guid binding when every element parses.
+            if (IsGuidJsonArray(jsonElement))
+                ApplyGuidInValues(query, column, JsonSerializer.Deserialize<IEnumerable<Guid>>(json), mode);
+            else
+                ApplyInValues(query, column, JsonSerializer.Deserialize<IEnumerable<string>>(json), mode);
+        }
+
+        private void ApplyInEnumerable<Q>(BaseQuery<Q> query, string column, object value, InClauseMode mode)
+            where Q : BaseQuery<Q>
+        {
+            Type elementType = GetEnumerableElementType(value.GetType())
+                ?? throw new ArgumentException($"Unsupported In list value type {value.GetType()}");
 
             if (elementType == typeof(string))
-            {
                 ApplyInValues(query, column, (IEnumerable<string>)value, mode);
-            }
             else if (elementType == typeof(Guid))
-            {
                 ApplyGuidInValues(query, column, (IEnumerable<Guid>)value, mode);
-            }
             else if (elementType == typeof(int))
-            {
                 ApplyInValues(query, column, (IEnumerable<int>)value, mode);
-            }
             else if (elementType == typeof(long))
-            {
                 ApplyInValues(query, column, (IEnumerable<long>)value, mode);
-            }
             else if (elementType == typeof(float))
-            {
                 ApplyInValues(query, column, (IEnumerable<float>)value, mode);
-            }
             else if (elementType == typeof(double))
-            {
                 ApplyInValues(query, column, (IEnumerable<double>)value, mode);
-            }
             else
-            {
                 throw new ArgumentException($"Unsupported In list element type {elementType}");
-            }
         }
 
         private void AddExpression<Q>(BaseQuery<Q> query, bool isFirst, Expression expression) where Q : BaseQuery<Q>
         {
             object value = ResolveExpressionValue(expression);
-            LogicalRelation logicalRelation = expression.LogicalRelation;
-            if (isFirst)
+            LogicalRelation logicalRelation = NormalizeFirstLogicalRelation(expression.LogicalRelation, isFirst);
+
+            if (IsConjunction(logicalRelation, isFirst))
+                ApplyConjunctionExpression(query, expression, value, logicalRelation);
+            else if (IsDisjunction(logicalRelation))
+                ApplyDisjunctionExpression(query, expression, value, logicalRelation);
+        }
+
+        private static LogicalRelation NormalizeFirstLogicalRelation(LogicalRelation logicalRelation, bool isFirst)
+        {
+            if (!isFirst)
+                return logicalRelation;
+            if (Object.Equals(logicalRelation, LogicalRelation.Or))
+                return LogicalRelation.And;
+            if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
+                return LogicalRelation.AndNot;
+            return logicalRelation;
+        }
+
+        private static bool IsConjunction(LogicalRelation logicalRelation, bool isFirst) =>
+            Object.Equals(logicalRelation, LogicalRelation.And)
+            || Object.Equals(logicalRelation, LogicalRelation.AndNot)
+            || isFirst;
+
+        private static bool IsDisjunction(LogicalRelation logicalRelation) =>
+            Object.Equals(logicalRelation, LogicalRelation.Or)
+            || Object.Equals(logicalRelation, LogicalRelation.OrNot);
+
+        private void ApplyConjunctionExpression<Q>(
+            BaseQuery<Q> query, Expression expression, object value, LogicalRelation logicalRelation)
+            where Q : BaseQuery<Q>
+        {
+            if (expression.IsRaw)
             {
-                if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                {
-                    logicalRelation = LogicalRelation.And;
-                }
-                else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                {
-                    logicalRelation = LogicalRelation.AndNot;
-                }
+                if (Object.Equals(logicalRelation, LogicalRelation.And))
+                    query.WhereRaw(expression.Name, (object[])value);
+                else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
+                    throw new ArgumentException("Logical relation `AndNot' is not support for raw expressions");
+                return;
             }
 
-            // Types of And combinations between expressions
-            if (Object.Equals(logicalRelation, LogicalRelation.And)
-                || Object.Equals(logicalRelation, LogicalRelation.AndNot)
-                || isFirst)
+            ApplyTypedRelation(query, expression, value, logicalRelation, isOr: false);
+        }
+
+        private void ApplyDisjunctionExpression<Q>(
+            BaseQuery<Q> query, Expression expression, object value, LogicalRelation logicalRelation)
+            where Q : BaseQuery<Q>
+        {
+            if (expression.IsRaw)
             {
-                if (expression.IsRaw)
-                {
-                    if (Object.Equals(logicalRelation, LogicalRelation.And))
-                    {
-                        query.WhereRaw(expression.Name, (object[])value);
-                    }
-                    else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                    {
-                        throw new ArgumentException("Logical relation `AndNot' is not support for raw expressions");
-                    }
-                }
-                else
-                {
-                    if (Object.Equals(expression.Relation, Relation.EqualTo))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.Where(expression.Name, Relation.EqualTo.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.Where(expression.Name, "!=", value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.GreaterThan))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.Where(expression.Name, Relation.GreaterThan.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.GreaterThanOrEqualTo))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.Where(expression.Name, Relation.LessThan.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.LessThan))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.Where(expression.Name, Relation.LessThan.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.Where(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.LessThanOrEqualTo))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.Where(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.Where(expression.Name, Relation.GreaterThan.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.In))
-                    {
-                        ApplyInExpression(query, expression, GetInClauseMode(logicalRelation));
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.StartsWith))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereStarts(expression.Name, value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereNotStarts(expression.Name, value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.EndsWith))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereEnds(expression.Name, value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereNotEnds(expression.Name, value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.Contains))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereContains(expression.Name, value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereNotContains(expression.Name, value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.NullValue))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereNull(expression.Name);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereNotNull(expression.Name);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.TrueValue))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereTrue(expression.Name);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereFalse(expression.Name);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.Exists))
-                    {
-                        SqlSelect sqlForExistanceCheck = (SqlSelect)value;
-                        if (Object.Equals(logicalRelation, LogicalRelation.And))
-                        {
-                            query.WhereExists(BuildSelectQuery(new Query(), sqlForExistanceCheck));
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.AndNot))
-                        {
-                            query.WhereNotExists(BuildSelectQuery(new Query(), sqlForExistanceCheck));
-                        }
-                    }
-                    else
-                    {
-                        throw new ArgumentException($"Unknown expression relation {expression.Relation}");
-                    }
-                }
+                if (Object.Equals(logicalRelation, LogicalRelation.Or))
+                    query.OrWhereRaw(expression.Name, (object[])value);
+                else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
+                    throw new ArgumentException("Logical relation `OrNot' is not support for raw expressions");
+                return;
             }
-            else if (Object.Equals(logicalRelation, LogicalRelation.Or)
-                 || Object.Equals(logicalRelation, LogicalRelation.OrNot))
+
+            ApplyTypedRelation(query, expression, value, logicalRelation, isOr: true);
+        }
+
+        private void ApplyTypedRelation<Q>(
+            BaseQuery<Q> query, Expression expression, object value, LogicalRelation logicalRelation, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            bool negate = isOr
+                ? Object.Equals(logicalRelation, LogicalRelation.OrNot)
+                : Object.Equals(logicalRelation, LogicalRelation.AndNot);
+            Relation relation = expression.Relation;
+
+            if (TryApplyComparison(query, expression.Name, value, relation, negate, isOr))
+                return;
+            if (Object.Equals(relation, Relation.In))
             {
-                if (expression.IsRaw)
-                {
-                    if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                    {
-                        query.OrWhereRaw(expression.Name, (object[])value);
-                    }
-                    else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                    {
-                        throw new ArgumentException("Logical relation `OrNot' is not support for raw expressions");
-                    }
-                }
-                else
-                {
-                    if (Object.Equals(expression.Relation, Relation.EqualTo))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhere(expression.Name, Relation.EqualTo.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhere(expression.Name, "!=", value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.GreaterThan))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.GreaterThanOrEqualTo))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.LessThan))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhere(expression.Name, Relation.LessThan.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhere(expression.Name, Relation.GreaterThanOrEqualTo.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.LessThanOrEqualTo))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhere(expression.Name, Relation.LessThanOrEqualTo.ToString(), value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhere(expression.Name, Relation.GreaterThan.ToString(), value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.In))
-                    {
-                        ApplyInExpression(query, expression, GetInClauseMode(logicalRelation));
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.StartsWith))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereStarts(expression.Name, value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNotStarts(expression.Name, value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.EndsWith))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereEnds(expression.Name, value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNotEnds(expression.Name, value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.Contains))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereContains(expression.Name, value);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNotContains(expression.Name, value);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.NullValue))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereNull(expression.Name);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNotNull(expression.Name);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.TrueValue))
-                    {
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereTrue(expression.Name);
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereFalse(expression.Name);
-                        }
-                    }
-                    else if (Object.Equals(expression.Relation, Relation.Exists))
-                    {
-                        SqlSelect sqlForExistanceCheck = (SqlSelect)value;
-                        if (Object.Equals(logicalRelation, LogicalRelation.Or))
-                        {
-                            query.OrWhereExists(BuildSelectQuery(new Query(), sqlForExistanceCheck));
-                        }
-                        else if (Object.Equals(logicalRelation, LogicalRelation.OrNot))
-                        {
-                            query.OrWhereNotExists(BuildSelectQuery(new Query(), sqlForExistanceCheck));
-                        }
-                    }
-                    else
-                    {
-                        throw new ArgumentException($"Unknown expression relation {expression.Relation}");
-                    }
-                }
+                ApplyInExpression(query, expression, GetInClauseMode(logicalRelation));
+                return;
+            }
+            if (TryApplyStringMatch(query, expression.Name, value, relation, negate, isOr))
+                return;
+            if (TryApplyNullOrTrue(query, expression.Name, relation, negate, isOr))
+                return;
+            if (Object.Equals(relation, Relation.Exists))
+            {
+                ApplyExists(query, (SqlSelect)value, negate, isOr);
+                return;
+            }
+
+            throw new ArgumentException($"Unknown expression relation {expression.Relation}");
+        }
+
+        private static readonly Dictionary<string, (string Positive, string Negative)> ComparisonOperators =
+            new(StringComparer.Ordinal)
+            {
+                [Relation.EqualTo.Value] = (Relation.EqualTo.ToString(), "!="),
+                [Relation.GreaterThan.Value] = (Relation.GreaterThan.ToString(), Relation.LessThanOrEqualTo.ToString()),
+                [Relation.GreaterThanOrEqualTo.Value] = (Relation.GreaterThanOrEqualTo.ToString(), Relation.LessThan.ToString()),
+                [Relation.LessThan.Value] = (Relation.LessThan.ToString(), Relation.GreaterThanOrEqualTo.ToString()),
+                [Relation.LessThanOrEqualTo.Value] = (Relation.LessThanOrEqualTo.ToString(), Relation.GreaterThan.ToString()),
+            };
+
+        private static bool TryApplyComparison<Q>(
+            BaseQuery<Q> query, string name, object value, Relation relation, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            string op = ResolveComparisonOperator(relation, negate);
+            if (op == null)
+                return false;
+            if (isOr)
+                query.OrWhere(name, op, value);
+            else
+                query.Where(name, op, value);
+            return true;
+        }
+
+        private static string ResolveComparisonOperator(Relation relation, bool negate)
+        {
+            if (relation?.Value == null
+                || !ComparisonOperators.TryGetValue(relation.Value, out (string Positive, string Negative) pair))
+                return null;
+            return negate ? pair.Negative : pair.Positive;
+        }
+
+        private static bool TryApplyStringMatch<Q>(
+            BaseQuery<Q> query, string name, object value, Relation relation, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (Object.Equals(relation, Relation.StartsWith))
+            {
+                ApplyStartsWith(query, name, value, negate, isOr);
+                return true;
+            }
+            if (Object.Equals(relation, Relation.EndsWith))
+            {
+                ApplyEndsWith(query, name, value, negate, isOr);
+                return true;
+            }
+            if (Object.Equals(relation, Relation.Contains))
+            {
+                ApplyContains(query, name, value, negate, isOr);
+                return true;
+            }
+            return false;
+        }
+
+        private static void ApplyStartsWith<Q>(BaseQuery<Q> query, string name, object value, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (isOr)
+            {
+                if (negate) query.OrWhereNotStarts(name, value);
+                else query.OrWhereStarts(name, value);
+            }
+            else
+            {
+                if (negate) query.WhereNotStarts(name, value);
+                else query.WhereStarts(name, value);
+            }
+        }
+
+        private static void ApplyEndsWith<Q>(BaseQuery<Q> query, string name, object value, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (isOr)
+            {
+                if (negate) query.OrWhereNotEnds(name, value);
+                else query.OrWhereEnds(name, value);
+            }
+            else
+            {
+                if (negate) query.WhereNotEnds(name, value);
+                else query.WhereEnds(name, value);
+            }
+        }
+
+        private static void ApplyContains<Q>(BaseQuery<Q> query, string name, object value, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (isOr)
+            {
+                if (negate) query.OrWhereNotContains(name, value);
+                else query.OrWhereContains(name, value);
+            }
+            else
+            {
+                if (negate) query.WhereNotContains(name, value);
+                else query.WhereContains(name, value);
+            }
+        }
+
+        private static bool TryApplyNullOrTrue<Q>(
+            BaseQuery<Q> query, string name, Relation relation, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (Object.Equals(relation, Relation.NullValue))
+            {
+                ApplyNullValue(query, name, negate, isOr);
+                return true;
+            }
+            if (Object.Equals(relation, Relation.TrueValue))
+            {
+                ApplyTrueValue(query, name, negate, isOr);
+                return true;
+            }
+            return false;
+        }
+
+        private static void ApplyNullValue<Q>(BaseQuery<Q> query, string name, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (isOr)
+            {
+                if (negate) query.OrWhereNotNull(name);
+                else query.OrWhereNull(name);
+            }
+            else
+            {
+                if (negate) query.WhereNotNull(name);
+                else query.WhereNull(name);
+            }
+        }
+
+        private static void ApplyTrueValue<Q>(BaseQuery<Q> query, string name, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            if (isOr)
+            {
+                if (negate) query.OrWhereFalse(name);
+                else query.OrWhereTrue(name);
+            }
+            else
+            {
+                if (negate) query.WhereFalse(name);
+                else query.WhereTrue(name);
+            }
+        }
+
+        private void ApplyExists<Q>(BaseQuery<Q> query, SqlSelect sqlSelect, bool negate, bool isOr)
+            where Q : BaseQuery<Q>
+        {
+            Query existsQuery = BuildSelectQuery(new Query(), sqlSelect);
+            if (isOr)
+            {
+                if (negate) query.OrWhereNotExists(existsQuery);
+                else query.OrWhereExists(existsQuery);
+            }
+            else
+            {
+                if (negate) query.WhereNotExists(existsQuery);
+                else query.WhereExists(existsQuery);
             }
         }
 

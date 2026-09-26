@@ -15,6 +15,10 @@ Source: https://github.com/Beztek-Software-Solutions/sql-facade
 ## Quick start
 
 ```bash
+make test
+make test-unit
+make coverage
+make coverage-html
 dotnet restore sql-facade.sln
 dotnet build sql-facade.sln
 dotnet test SqlFacade.Tests/Beztek.Facade.Sql.Test.csproj
@@ -23,6 +27,8 @@ dotnet test SqlFacade.Tests/Beztek.Facade.Sql.Test.csproj
 With coverage (Coverlet; target ≥ 85% line coverage):
 
 ```bash
+make coverage-html
+# or:
 dotnet test SqlFacade.Tests/Beztek.Facade.Sql.Test.csproj \
   /p:CollectCoverage=true \
   /p:CoverletOutputFormat=cobertura \
@@ -85,4 +91,4 @@ Local development can use SQLite (in-memory or file); production can switch engi
 
 **Do not treat MariaDB as MySQL.** They share SQLKata’s `MySqlCompiler` for quoting/`LIMIT`, but NestedList JSON nesting differs — see [Dialect quirks](SqlFacade/README.md#dialect-quirks) in the library README.
 
-For expression-level differences the facade does not abstract (boolean literals, `NOW()`, casts, NestedList-safe JSON fields, and similar), keep an application **dialect helper** next to your SQL generators — a multi-engine consolidated sample (from AnchoredLove / Grasp / MemoryMark patterns) is in [Application dialect helpers](SqlFacade/README.md#application-dialect-helpers) and [`SqlFacade.Example/ExampleSqlDialect.cs`](SqlFacade.Example/ExampleSqlDialect.cs). That helper belongs in the **app**, not in the NuGet package.
+For expression-level differences the facade does not abstract (boolean literals, `NOW()`, casts, NestedList-safe JSON fields, and similar), keep an application **dialect helper** next to your SQL generators — a multi-engine consolidated sample is in [Application dialect helpers](SqlFacade/README.md#application-dialect-helpers) and [`SqlFacade.Example/ExampleSqlDialect.cs`](SqlFacade.Example/ExampleSqlDialect.cs). That helper belongs in the **app**, not in the NuGet package.

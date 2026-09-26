@@ -47,6 +47,10 @@ var config = new SqlFacadeConfig(
 ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
 ```
 
+**RDS IAM authentication:** this library does not generate IAM auth tokens.
+The host must put a (short-lived) token in the connection-string `Password`
+(or equivalent) before constructing `SqlFacadeConfig`, and refresh it as needed.
+
 ### SQL Server
 
 ```csharp
@@ -430,7 +434,7 @@ This facade lets you run **integration-style unit tests against SQLite in-memory
 
 SQLKata (via this facade) already handles **structural** dialect differences: identifier quoting, `LIMIT`/`OFFSET`, parameterized placeholders, and similar. What it does **not** unify are **expression-level** fragments — boolean literals, `NOW()`, type casts, `DateOnly` writes, NestedList-safe JSON column selects, UUID text projection, PostGIS vs plain lat/lon, and so on.
 
-Those belong in an **application-owned dialect helper** (not in this library). AnchoredLove, Grasp, and MemoryMark each keep a static `SqlDialect` next to their SQL generators; all three today are **Postgres deploy / SQLite test** (`UseSqlite` bool). The consolidated sample below upgrades that pattern to a `DbType Engine` switch so the same generators can target MySQL, MariaDB, SQL Server, or Oracle as well. A runnable copy lives in [`SqlFacade.Example/ExampleSqlDialect.cs`](../SqlFacade.Example/ExampleSqlDialect.cs).
+Those belong in an **application-owned dialect helper** (not in this library). Applications typically keep a static `SqlDialect` next to their SQL generators and deploy Postgres while testing against SQLite (`UseSqlite` bool or equivalent). The consolidated sample below upgrades that pattern to a `DbType Engine` switch so the same generators can target MySQL, MariaDB, SQL Server, or Oracle as well. A runnable copy lives in [`SqlFacade.Example/ExampleSqlDialect.cs`](../SqlFacade.Example/ExampleSqlDialect.cs).
 
 ### Why a helper (and why it stays in the app)
 
@@ -439,7 +443,7 @@ Those belong in an **application-owned dialect helper** (not in this library). A
 | `SqlFacade` / SQLKata | Compile `SqlSelect` / `SqlInsert` / … into dialect SQL for each `DbType` |
 | App `SqlDialect` | Emit engine-specific **raw expressions**, **bind values**, and **Field** helpers used *inside* those query objects |
 
-**Should this live in the NuGet library?** Generally **no**. The shared core (bools, casts, timestamps, NestedList field factories, Guid/DateOnly writes) is small and stable, but real apps also carry **domain-specific** helpers — PostGIS `ST_X` / WKT (MemoryMark, AnchoredLove), HTML-escaped concat, schema prefixes (`app.` in Grasp), `AsyncLocal` overrides for parallel tests, and product-specific date rules. Baking those into `Beztek.Facade.Sql` would either omit what apps need or pull every product concern into the package. Prefer: copy the sample into each API (or a thin shared internal package owned by your org), keep it next to SQL generators, and align `Engine` with `SqlFacadeConfig.DbType` at startup.
+**Should this live in the NuGet library?** Generally **no**. The shared core (bools, casts, timestamps, NestedList field factories, Guid/DateOnly writes) is small and stable, but real apps also carry **domain-specific** helpers — PostGIS `ST_X` / WKT, HTML-escaped concat, schema-qualified table names, `AsyncLocal` overrides for parallel tests, and product-specific date rules. Baking those into `Beztek.Facade.Sql` would either omit what apps need or pull every product concern into the package. Prefer: copy the sample into each API (or a thin shared internal package owned by your org), keep it next to SQL generators, and align `Engine` with `SqlFacadeConfig.DbType` at startup.
 
 ### Process
 
@@ -451,7 +455,7 @@ Those belong in an **application-owned dialect helper** (not in this library). A
 
 ### Consolidated skeleton (`DbType` switch)
 
-Union of the helpers used in AnchoredLove / Grasp / MemoryMark, extended for all facade engines. Trim methods you do not need; add PostGIS / schema helpers in the app.
+A practical union of helpers commonly needed across engines. Trim methods you do not need; add PostGIS / schema helpers in the app.
 
 ```csharp
 public static class SqlDialect
@@ -557,7 +561,7 @@ SqlDialect.Engine = DbType.SQLITE;
 | Guid write / `IN` | native `Guid` | `D`-format text | `D`-format text | native `Guid` | `D`-format text |
 | `DateOnly` write | invariant `yyyy-MM-dd` | same | same | same | same |
 
-**App-only extensions** (keep out of the shared sample): PostGIS `ST_X` / `POINT(lon lat)` vs `longitude`/`latitude` columns (MemoryMark, AnchoredLove); schema-qualified table names; regex / `GLOB` etag predicates; HTML entity escaping in concat.
+**App-only extensions** (keep out of the shared sample): PostGIS `ST_X` / `POINT(lon lat)` vs `longitude`/`latitude` columns; schema-qualified table names; regex / `GLOB` etag predicates; HTML entity escaping in concat.
 
 ## Testing
 
