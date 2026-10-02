@@ -76,6 +76,8 @@ dotnet add package Beztek.Facade.Sql
 
 See [SqlFacade/README.md](SqlFacade/README.md) for initialization samples, query objects, pagination, JSON round-trip, and `NestedList` child collections.
 
+**Rotating passwords / cloud IAM (RDS, GCP, Azure):** [Rotating passwords and cloud IAM tokens](SqlFacade/README.md#rotating-passwords-and-cloud-iam-tokens) — host-side minting via `PasswordProvider`; the library caches until near token expiry.
+
 ## Database engines
 
 | Engine | `DbType` | Driver | Status |

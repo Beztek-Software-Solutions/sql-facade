@@ -96,5 +96,157 @@ namespace Beztek.Facade.Sql.Test
 
             Assert.That(first, Is.SameAs(second));
         }
+
+        [Test]
+        public void ResolveConnectionString_UsesProvider_WhenSet()
+        {
+            var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:")
+            {
+                ConnectionStringProvider = () => "Data Source=provided.db"
+            };
+
+            Assert.That(config.ResolveConnectionString(), Is.EqualTo("Data Source=provided.db"));
+            Assert.That(config.ConnectionString, Is.EqualTo("Data Source=:memory:"));
+        }
+
+        [Test]
+        public void ResolveConnectionString_Throws_WhenProviderReturnsBlank()
+        {
+            var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:")
+            {
+                ConnectionStringProvider = () => "  "
+            };
+
+            Assert.Throws<InvalidOperationException>(() => config.ResolveConnectionString());
+        }
+
+        [Test]
+        public void GetConnection_InvokesProvider_OnEachOpen()
+        {
+            int calls = 0;
+            string path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"sql-facade-provider-{Guid.NewGuid():N}.db");
+            try
+            {
+                var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=identity-only")
+                {
+                    ConnectionStringProvider = () =>
+                    {
+                        calls++;
+                        return $"Data Source={path}";
+                    }
+                };
+
+                using (IDbConnection first = config.GetConnection())
+                {
+                    Assert.That(first.State, Is.EqualTo(ConnectionState.Open));
+                }
+
+                using (IDbConnection second = config.GetConnection())
+                {
+                    Assert.That(second.State, Is.EqualTo(ConnectionState.Open));
+                }
+
+                Assert.That(calls, Is.EqualTo(2));
+            }
+            finally
+            {
+                if (System.IO.File.Exists(path))
+                    System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void Equals_IncludesConnectionStringProviderIdentity()
+        {
+            Func<string> provider = () => "Data Source=:memory:";
+            var withProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:")
+            {
+                ConnectionStringProvider = provider
+            };
+            var sameProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:")
+            {
+                ConnectionStringProvider = provider
+            };
+            var differentProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:")
+            {
+                ConnectionStringProvider = () => "Data Source=:memory:"
+            };
+            var withoutProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:");
+
+            Assert.That(withProvider.Equals(sameProvider), Is.True);
+            Assert.That(withProvider.GetHashCode(), Is.EqualTo(sameProvider.GetHashCode()));
+            Assert.That(withProvider.Equals(differentProvider), Is.False);
+            Assert.That(withProvider.Equals(withoutProvider), Is.False);
+        }
+
+        [Test]
+        public void ResolveConnectionString_CachesPasswordProvider_UntilNearExpiry()
+        {
+            int calls = 0;
+            var start = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+            var time = new ManualTimeProvider(start);
+            var config = new SqlFacadeConfig(
+                Beztek.Facade.Sql.DbType.POSTGRES,
+                "Host=db.example.com;Port=5432;Database=grasp;Username=grasp")
+            {
+                TimeProvider = time,
+                PasswordRefreshSkew = TimeSpan.FromMinutes(2),
+                PasswordProvider = () =>
+                {
+                    calls++;
+                    return new SqlPassword($"token-{calls}", time.GetUtcNow().AddMinutes(15));
+                }
+            };
+
+            var first = config.ResolveConnectionString();
+            var second = config.ResolveConnectionString();
+            Assert.That(first, Does.Contain("token-1"));
+            Assert.That(second, Does.Contain("token-1"));
+            Assert.That(calls, Is.EqualTo(1));
+
+            time.Advance(TimeSpan.FromMinutes(12));
+            Assert.That(config.ResolveConnectionString(), Does.Contain("token-1"));
+            Assert.That(calls, Is.EqualTo(1));
+
+            time.Advance(TimeSpan.FromMinutes(2));
+            Assert.That(config.ResolveConnectionString(), Does.Contain("token-2"));
+            Assert.That(calls, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void SqlPassword_RequiresExpiresAt_AndNonBlankPassword()
+        {
+            var expires = DateTimeOffset.UtcNow.AddMinutes(15);
+            var password = new SqlPassword("token", expires);
+
+            Assert.That(password.Password, Is.EqualTo("token"));
+            Assert.That(password.ExpiresAt, Is.EqualTo(expires));
+            Assert.Throws<ArgumentException>(() => new SqlPassword(" ", expires));
+        }
+
+        [Test]
+        public void ResolveConnectionString_ConnectionStringProvider_WinsOverPasswordProvider()
+        {
+            var config = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.POSTGRES, "Host=a;Database=b;Username=c")
+            {
+                PasswordProvider = () => new SqlPassword("ignored", DateTimeOffset.UtcNow.AddMinutes(15)),
+                ConnectionStringProvider = () => "Host=provided;Database=b;Username=c;Password=full"
+            };
+
+            Assert.That(config.ResolveConnectionString(), Is.EqualTo("Host=provided;Database=b;Username=c;Password=full"));
+        }
+
+        private sealed class ManualTimeProvider : TimeProvider
+        {
+            private DateTimeOffset _utc;
+
+            public ManualTimeProvider(DateTimeOffset utc) => _utc = utc;
+
+            public override DateTimeOffset GetUtcNow() => _utc;
+
+            public void Advance(TimeSpan delta) => _utc += delta;
+        }
     }
 }

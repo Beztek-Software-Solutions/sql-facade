@@ -40,6 +40,8 @@ ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
 
 ### PostgreSQL
 
+**Static password** (local dev, compose, break-glass):
+
 ```csharp
 var config = new SqlFacadeConfig(
     DbType.POSTGRES,
@@ -47,9 +49,8 @@ var config = new SqlFacadeConfig(
 ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
 ```
 
-**RDS IAM authentication:** this library does not generate IAM auth tokens.
-The host must put a (short-lived) token in the connection-string `Password`
-(or equivalent) before constructing `SqlFacadeConfig`, and refresh it as needed.
+**Cloud IAM / rotating tokens:** use [`PasswordProvider`](#rotating-passwords-and-cloud-iam-tokens)
+(not a password in the connection string). See that section for RDS, GCP, and Azure.
 
 ### SQL Server
 
@@ -88,6 +89,179 @@ var config = new SqlFacadeConfig(
     "User Id=app;Password=secret;Data Source=localhost:1521/XEPDB1");
 ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
 ```
+
+### Rotating passwords and cloud IAM tokens
+
+Managed Postgres often uses a **short-lived token as the password** (AWS RDS IAM
+~15 minutes, Google Cloud SQL / AlloyDB and Azure Entra ~1 hour). The token is
+only checked when a **new physical connection** opens; an already-open session
+stays valid after the token expires.
+
+**This library does not call AWS, Google, or Azure.** Your host mints the token
+and returns it through `SqlFacadeConfig.PasswordProvider`.
+
+#### Recommended: `PasswordProvider`
+
+`PasswordProvider` is **only** for short-lived credentials. `SqlPassword`
+**requires** `ExpiresAt` (UTC). The facade caches until
+`ExpiresAt − PasswordRefreshSkew` (default skew **2 minutes**), then remints on
+the next `GetConnection()`.
+
+1. Set `ConnectionString` to a **stable identity** (host, port, database, user,
+   SSL flags) **without** a rotating password. That string is the
+   `SqlFacadeFactory` cache key.
+2. Set `PasswordProvider` to mint the token and return
+   `new SqlPassword(token, expiresAt)`.
+3. Do **not** use `PasswordProvider` for static secrets — put those in
+   `ConnectionString` and omit the provider.
+
+Remint happens when a connection opens **after** the cache window; there is no
+background timer. Prefer this over `ConnectionStringProvider` (full string every
+open) so the password stays stable for most of the token lifetime and pooling
+is not churned.
+
+```csharp
+var identity =
+    "Host=db.example.com;Port=5432;Database=mydb;Username=app;SSL Mode=Require";
+
+var time = TimeProvider.System;
+var config = new SqlFacadeConfig(DbType.POSTGRES, identity)
+{
+    TimeProvider = time, // optional; default System
+    PasswordRefreshSkew = TimeSpan.FromMinutes(2),
+    PasswordProvider = () =>
+    {
+        var token = MintFromYourCloud(); // see provider examples below
+        // ExpiresAt is required — omit PasswordProvider for static passwords.
+        return new SqlPassword(token, expiresAt: time.GetUtcNow().AddMinutes(15));
+    },
+};
+
+ISqlFacade sql = SqlFacadeFactory.GetSqlFacade(config);
+```
+
+**Static password:** put the secret in `ConnectionString` and omit
+`PasswordProvider`. Code paths that bypass SqlFacade (migrations, one-off
+`NpgsqlConnection`) must mint their own token if they use IAM.
+
+#### AWS RDS / Aurora PostgreSQL (IAM DB auth)
+
+Use the AWS SDK in the host (`Amazon.RDS.Util.RDSAuthTokenGenerator`). Tokens
+are SigV4 presigned credentials with a **15-minute** lifetime. Sign against the
+**RDS endpoint hostname** (not a custom CNAME). PostgreSQL IAM users need the
+`rds_iam` role on the database side.
+
+```csharp
+using Amazon.RDS.Util;
+
+var host = "mydb.123456789012.us-east-1.rds.amazonaws.com";
+var port = 5432;
+var username = "app_user";
+var region = "us-east-1";
+
+var identity =
+    $"Host={host};Port={port};Database=mydb;Username={username};SSL Mode=Require";
+
+var time = TimeProvider.System;
+var config = new SqlFacadeConfig(DbType.POSTGRES, identity)
+{
+    TimeProvider = time,
+    PasswordProvider = () =>
+    {
+        var token = RDSAuthTokenGenerator.GenerateAuthToken(host, port, username, region);
+        return new SqlPassword(token, time.GetUtcNow().AddMinutes(15));
+    },
+};
+```
+
+Works the same for **Aurora PostgreSQL** (cluster endpoint in `host`).
+
+#### Google Cloud SQL / AlloyDB (IAM database authentication)
+
+Mint an OAuth access token with scope `https://www.googleapis.com/auth/sqlservice.login`
+(Application Default Credentials or a service account). Typical lifetime **~1
+hour**. The database username is often the IAM principal email (for example
+`my-sa@my-project.iam`). Google recommends the **Cloud SQL Auth Proxy** or
+language connectors when possible; direct TCP + token-as-password is still
+supported by passing the token through `PasswordProvider`.
+
+```csharp
+using Google.Apis.Auth.OAuth2;
+
+const string LoginScope = "https://www.googleapis.com/auth/sqlservice.login";
+
+var identity =
+    "Host=10.0.0.5;Port=5432;Database=mydb;Username=my-sa@my-project.iam;SSL Mode=Require";
+
+var time = TimeProvider.System;
+var config = new SqlFacadeConfig(DbType.POSTGRES, identity)
+{
+    TimeProvider = time,
+    PasswordProvider = () =>
+    {
+        var credential = GoogleCredential.GetApplicationDefault()
+            .CreateScoped(LoginScope);
+        var token = credential.UnderlyingCredential
+            .GetAccessTokenForRequestAsync().GetAwaiter().GetResult();
+        // Refresh before the hour; ADC may cache internally as well.
+        return new SqlPassword(token, time.GetUtcNow().AddMinutes(55));
+    },
+};
+```
+
+Add the `Google.Apis.Auth` package (or your preferred credential helper) to the
+**host application**, not to `Beztek.Facade.Sql`.
+
+#### Azure Database for PostgreSQL (Microsoft Entra ID)
+
+Acquire an access token for scope
+`https://ossrdbms-aad.database.windows.net/.default` via `Azure.Identity`
+(for example `DefaultAzureCredential`). Use `TokenCredential.GetToken` and pass
+`AccessToken.ExpiresOn` into `SqlPassword`. SSL is required (`SSL Mode=Require`).
+
+```csharp
+using Azure.Core;
+using Azure.Identity;
+
+var identity =
+    "Host=myserver.postgres.database.azure.com;Database=mydb;Username=my-db-role;SSL Mode=Require";
+
+var credential = new DefaultAzureCredential();
+var scopes = new[] { "https://ossrdbms-aad.database.windows.net/.default" };
+var time = TimeProvider.System;
+
+var config = new SqlFacadeConfig(DbType.POSTGRES, identity)
+{
+    TimeProvider = time,
+    PasswordProvider = () =>
+    {
+        var token = credential.GetToken(new TokenRequestContext(scopes), CancellationToken.None);
+        return new SqlPassword(token.Token, token.ExpiresOn);
+    },
+};
+```
+
+Optional: `Microsoft.Azure.PostgreSQL.Auth` adds Npgsql `UseEntraAuthentication`
+on `NpgsqlDataSourceBuilder`. SqlFacade opens connections through ADO.NET
+connection strings today, so **`PasswordProvider` + token-as-password** is the
+integration path unless you adopt `NpgsqlDataSource` elsewhere.
+
+Add `Azure.Identity` (and any Entra helper packages) to the **host application**.
+
+#### Alternative: `ConnectionStringProvider`
+
+If set, `ConnectionStringProvider` runs on every open and **wins over**
+`PasswordProvider`. It must return a complete connection string (including
+password). There is **no** built-in password cache on this path — if you return a
+new token in the string every time, connection pool keys change more often.
+Use it when the host already builds full strings; prefer `PasswordProvider` for
+IAM tokens.
+
+#### Other engines
+
+`PasswordProvider` merges into connection strings for **PostgreSQL, SQL Server,
+MySQL/MariaDB, and Oracle** the same way. SQLite ignores password rotation for
+file/in-memory configs.
 
 ### Transaction isolation
 

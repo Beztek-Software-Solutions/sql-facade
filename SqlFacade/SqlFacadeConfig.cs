@@ -4,6 +4,7 @@ namespace Beztek.Facade.Sql
 {
     using System;
     using System.Data;
+    using System.Runtime.CompilerServices;
     using System.Transactions;
     using Microsoft.Data.SqlClient;
     using Microsoft.Data.Sqlite;
@@ -13,9 +14,44 @@ namespace Beztek.Facade.Sql
 
     public class SqlFacadeConfig
     {
+        private readonly object passwordGate = new object();
+        private string cachedPassword;
+        private DateTimeOffset refreshAfter = DateTimeOffset.MinValue;
+
         public DbType DbType { get; set; }
 
         public string ConnectionString { get; set; }
+
+        /// <summary>
+        /// Optional factory that returns a full connection string on every
+        /// <see cref="GetConnection"/>. When set, it wins over
+        /// <see cref="PasswordProvider"/>. Keep <see cref="ConnectionString"/> as
+        /// the stable <see cref="SqlFacadeFactory"/> identity.
+        /// </summary>
+        public Func<string> ConnectionStringProvider { get; set; }
+
+        /// <summary>
+        /// Optional password factory for <b>short-lived</b> credentials (RDS IAM,
+        /// Cloud SQL, Azure Entra, …). The facade merges the password into
+        /// <see cref="ConnectionString"/> and caches until
+        /// <see cref="SqlPassword.ExpiresAt"/> minus <see cref="PasswordRefreshSkew"/>.
+        /// Every mint must supply a non-null <see cref="SqlPassword.ExpiresAt"/> —
+        /// put static secrets in <see cref="ConnectionString"/> instead of this
+        /// provider. Hosts supply minting; this library does not call cloud APIs.
+        /// Ignored when <see cref="ConnectionStringProvider"/> is set.
+        /// </summary>
+        public Func<SqlPassword> PasswordProvider { get; set; }
+
+        /// <summary>
+        /// Clock for password-cache expiry. Defaults to <see cref="TimeProvider.System"/>.
+        /// </summary>
+        public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+        /// <summary>
+        /// Refresh cached passwords this far before <see cref="SqlPassword.ExpiresAt"/>.
+        /// Default two minutes.
+        /// </summary>
+        public TimeSpan PasswordRefreshSkew { get; set; } = TimeSpan.FromMinutes(2);
 
         /// <summary>
         /// Isolation level for <see cref="SqlFacade"/> <see cref="System.Transactions.TransactionScope"/> wrappers.
@@ -35,14 +71,21 @@ namespace Beztek.Facade.Sql
                 return false;
             return DbType == other.DbType
                 && String.Equals(ConnectionString, other.ConnectionString)
-                && TransactionIsolationLevel == other.TransactionIsolationLevel;
+                && TransactionIsolationLevel == other.TransactionIsolationLevel
+                && ReferenceEquals(ConnectionStringProvider, other.ConnectionStringProvider)
+                && ReferenceEquals(PasswordProvider, other.PasswordProvider);
         }
 
         public override int GetHashCode()
         {
-            return DbType.GetHashCode()
+            var hash = DbType.GetHashCode()
                 ^ ConnectionString.GetHashCode()
                 ^ TransactionIsolationLevel.GetHashCode();
+            if (ConnectionStringProvider is not null)
+                hash ^= RuntimeHelpers.GetHashCode(ConnectionStringProvider);
+            if (PasswordProvider is not null)
+                hash ^= RuntimeHelpers.GetHashCode(PasswordProvider);
+            return hash;
         }
 
         public virtual IDbConnection GetConnection()
@@ -54,39 +97,124 @@ namespace Beztek.Facade.Sql
             throw new ArgumentException(DbType + " is not supported");
         }
 
+        /// <summary>
+        /// Connection string used to open the next connection.
+        /// Order: <see cref="ConnectionStringProvider"/>, else
+        /// <see cref="ConnectionString"/> with cached <see cref="PasswordProvider"/>
+        /// password merged in, else <see cref="ConnectionString"/> alone.
+        /// </summary>
+        public string ResolveConnectionString()
+        {
+            if (ConnectionStringProvider is not null)
+            {
+                var provided = ConnectionStringProvider();
+                if (string.IsNullOrWhiteSpace(provided))
+                {
+                    throw new InvalidOperationException(
+                        "SqlFacadeConfig.ConnectionStringProvider returned a null or blank connection string.");
+                }
+
+                return provided;
+            }
+
+            if (PasswordProvider is not null)
+                return ApplyPassword(ConnectionString, ResolvePassword());
+
+            return ConnectionString;
+        }
+
+        private string ResolvePassword()
+        {
+            lock (passwordGate)
+            {
+                var now = TimeProvider.GetUtcNow();
+                if (cachedPassword is not null && now < refreshAfter)
+                    return cachedPassword;
+
+                var minted = PasswordProvider();
+                cachedPassword = minted.Password;
+                // PasswordProvider is for short-lived secrets only; ExpiresAt is required.
+                refreshAfter = minted.ExpiresAt - PasswordRefreshSkew;
+                return cachedPassword;
+            }
+        }
+
+        private string ApplyPassword(string connectionString, string password)
+        {
+            return DbType switch
+            {
+                DbType.POSTGRES => ApplyNpgsql(connectionString, password),
+                DbType.SQLSERVER => ApplySqlServer(connectionString, password),
+                DbType.MYSQL or DbType.MARIADB => ApplyMySql(connectionString, password),
+                DbType.ORACLE => ApplyOracle(connectionString, password),
+                DbType.SQLITE => connectionString,
+                _ => throw new ArgumentException(DbType + " is not supported")
+            };
+        }
+
+        private static string ApplyNpgsql(string connectionString, string password)
+        {
+            var builder = new NpgsqlConnectionStringBuilder(connectionString) { Password = password };
+            return builder.ConnectionString;
+        }
+
+        private static string ApplySqlServer(string connectionString, string password)
+        {
+            var builder = new SqlConnectionStringBuilder(connectionString) { Password = password };
+            return builder.ConnectionString;
+        }
+
+        private static string ApplyMySql(string connectionString, string password)
+        {
+            var builder = new MySqlConnectionStringBuilder(connectionString) { Password = password };
+            return builder.ConnectionString;
+        }
+
+        private static string ApplyOracle(string connectionString, string password)
+        {
+            var builder = new OracleConnectionStringBuilder(connectionString) { Password = password };
+            return builder.ConnectionString;
+        }
+
         private bool TryOpenServerConnection(out IDbConnection connection)
         {
+            connection = null!;
+            if (DbType is not (DbType.POSTGRES or DbType.SQLSERVER or DbType.MYSQL or DbType.MARIADB or DbType.ORACLE))
+                return false;
+
+            var connectionString = ResolveConnectionString();
             connection = DbType switch
             {
-                DbType.POSTGRES => OpenAndEnlist(new NpgsqlConnection(ConnectionString)),
-                DbType.SQLSERVER => OpenAndEnlist(new SqlConnection(ConnectionString)),
+                DbType.POSTGRES => OpenAndEnlist(new NpgsqlConnection(connectionString)),
+                DbType.SQLSERVER => OpenAndEnlist(new SqlConnection(connectionString)),
                 // MySqlConnector works for both MySQL and MariaDB wire protocols.
-                DbType.MYSQL or DbType.MARIADB => OpenAndEnlist(new MySqlConnection(ConnectionString)),
-                DbType.ORACLE => OpenAndEnlist(new OracleConnection(ConnectionString)),
-                _ => null
+                DbType.MYSQL or DbType.MARIADB => OpenAndEnlist(new MySqlConnection(connectionString)),
+                DbType.ORACLE => OpenAndEnlist(new OracleConnection(connectionString)),
+                _ => null!
             };
-            return connection != null;
+            return true;
         }
 
         private IDbConnection OpenSqliteConnection()
         {
-            if (IsInMemorySqliteDB(ConnectionString))
-                return GetOrOpenInMemorySqlite();
+            var connectionString = ResolveConnectionString();
+            if (IsInMemorySqliteDB(connectionString))
+                return GetOrOpenInMemorySqlite(connectionString);
 
             // Microsoft.Data.Sqlite does not implement EnlistTransaction (ambient
             // System.Transactions). Open for parity with other engines; app code can still
             // use connection.BeginTransaction() or rely on the facade's TransactionScope
             // for non-distributed local work where the provider participates differently.
-            SqliteConnection conn = new SqliteConnection(ConnectionString);
+            SqliteConnection conn = new SqliteConnection(connectionString);
             conn.Open();
             return conn;
         }
 
-        private InMemorySqliteConnection GetOrOpenInMemorySqlite()
+        private InMemorySqliteConnection GetOrOpenInMemorySqlite(string connectionString)
         {
             if (inMemorySqliteConnection == null)
             {
-                inMemorySqliteConnection = new InMemorySqliteConnection(ConnectionString);
+                inMemorySqliteConnection = new InMemorySqliteConnection(connectionString);
                 inMemorySqliteConnection.Open();
             }
             // Shared keep-alive connection: do not re-enlist here — sequential
