@@ -151,10 +151,12 @@ namespace Beztek.Facade.Sql
             Type underlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
             if (raw == null || raw is DBNull)
                 return null;
-            if (underlying.IsInstanceOfType(raw))
-                return raw;
+            // Known types first so DateTime goes through NormalizeUtcDateTime (Unspecified → Utc)
+            // even when the raw value is already a DateTime instance.
             if (TryConvertKnownType(raw, underlying, out object converted))
                 return converted;
+            if (underlying.IsInstanceOfType(raw))
+                return raw;
             if (raw is string s)
                 return ConvertStringToPrimitive(s, underlying);
             return Convert.ChangeType(raw, underlying, CultureInfo.InvariantCulture);

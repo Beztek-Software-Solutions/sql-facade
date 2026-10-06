@@ -283,7 +283,11 @@ sql.GetResults<T>(...);
 scope.Complete();
 ```
 
+The outer scope’s isolation must match the facade (default **ReadCommitted**); a mismatch throws when the facade joins. A parameterless `TransactionScope` is Serializable — set `TransactionOptions.IsolationLevel` to ReadCommitted unless you intentionally configured the facade for something else.
+
 File-backed SQLite is opened on each call like the other engines. **Microsoft.Data.Sqlite does not implement ambient `EnlistTransaction`**, so file SQLite does not join `TransactionScope` the way Postgres/SQL Server/MySQL/Oracle do. In-memory SQLite keeps a shared connection alive for the process (required so `:memory:` survives across calls) and is not re-enlisted on every call.
+
+Live ambient-scope tests (`LiveAmbientTransactionTests`) run when `SQLFACADE_LIVE_ENGINES` selects an enlisting engine (or `all`). They skip SQLite automatically. Example: `SQLFACADE_LIVE_ENGINES=postgres`.
 
 ## Query model
 

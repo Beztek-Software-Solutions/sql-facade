@@ -60,5 +60,20 @@ namespace Beztek.Facade.Sql.Test.Live
             Environment.SetEnvironmentVariable(LiveEngineSelection.EnvVar, "cosmos");
             Assert.Throws<ArgumentException>(() => LiveEngineSelection.Resolve());
         }
+
+        [Test]
+        public void AmbientFixtureSource_ExcludesSqlite_WhenAllSelected()
+        {
+            Environment.SetEnvironmentVariable(LiveEngineSelection.EnvVar, "all");
+            var engines = new List<DbType>();
+            foreach (object data in LiveAmbientTransactionFixtureSource.Engines())
+            {
+                engines.Add((DbType)((TestFixtureData)data).Arguments[0]!);
+            }
+
+            Assert.That(engines, Does.Not.Contain(DbType.SQLITE));
+            Assert.That(engines, Does.Contain(DbType.POSTGRES));
+            Assert.That(engines.Count, Is.EqualTo(5));
+        }
     }
 }

@@ -322,6 +322,200 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(json, Does.Contain("3.5").Or.Contain("3.50"));
         }
 
+        [Test]
+        public void Map_IListProperty_AcceptsList()
+        {
+            var row = new Dictionary<string, object>
+            {
+                ["Id"] = "p1",
+                ["Children"] = """[{"id":"c1"}]"""
+            };
+            IListParent mapped = NestedListMapper.Map<IListParent>(new[] { row }, new[] { ChildrenNested() })[0];
+            Assert.That(mapped.Children, Has.Count.EqualTo(1));
+            Assert.That(mapped.Children[0].Id, Is.EqualTo("c1"));
+        }
+
+        [Test]
+        public void Map_DateTimeKinds_AndLooseTextFormats()
+        {
+            var nested = ChildrenNested();
+            var unspecified = new DateTime(2026, 7, 31, 12, 0, 0, DateTimeKind.Unspecified);
+            var local = new DateTime(2026, 7, 31, 12, 0, 0, DateTimeKind.Local);
+            var offset = new DateTimeOffset(2026, 7, 31, 14, 0, 0, TimeSpan.FromHours(2));
+
+            DateParent fromUnspecified = NestedListMapper.Map<DateParent>(
+                new[] { new Dictionary<string, object> { ["CreatedAt"] = unspecified, ["Children"] = "[]" } },
+                new[] { nested })[0];
+            Assert.That(fromUnspecified.CreatedAt.Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(fromUnspecified.CreatedAt, Is.EqualTo(new DateTime(2026, 7, 31, 12, 0, 0, DateTimeKind.Utc)));
+
+            DateParent fromLocal = NestedListMapper.Map<DateParent>(
+                new[] { new Dictionary<string, object> { ["CreatedAt"] = local, ["Children"] = "[]" } },
+                new[] { nested })[0];
+            Assert.That(fromLocal.CreatedAt.Kind, Is.EqualTo(DateTimeKind.Utc));
+
+            DateParent fromOffset = NestedListMapper.Map<DateParent>(
+                new[] { new Dictionary<string, object> { ["CreatedAt"] = offset, ["Children"] = "[]" } },
+                new[] { nested })[0];
+            Assert.That(fromOffset.CreatedAt, Is.EqualTo(new DateTime(2026, 7, 31, 12, 0, 0, DateTimeKind.Utc)));
+
+            // Space separator + offset (not exact-format table) and loose culture parse.
+            AssertUtc("2026-07-31 21:00:00+02:00", new DateTime(2026, 7, 31, 19, 0, 0, DateTimeKind.Utc));
+            AssertUtc("July 31, 2026 12:00:00", new DateTime(2026, 7, 31, 12, 0, 0, DateTimeKind.Utc));
+            // Two fractional digits + Z is not in the exact-format table → EndsWith("Z") designator path.
+            AssertUtc("2026-07-31T12:00:00.12Z", new DateTime(2026, 7, 31, 12, 0, 0, 120, DateTimeKind.Utc));
+        }
+
+        [Test]
+        public void Map_GuidInstance_AndChangeTypeByte_AndShortString()
+        {
+            var nested = ChildrenNested();
+            var id = Guid.Parse("11111111-2222-3333-4444-555555555555");
+            var row = new Dictionary<string, object>
+            {
+                ["ExternalId"] = id,
+                ["ByteVal"] = 7,
+                ["ShortVal"] = "42",
+                ["Children"] = "[]"
+            };
+            var mapped = NestedListMapper.Map<GuidByteParent>(new[] { row }, new[] { nested })[0];
+            Assert.That(mapped.ExternalId, Is.EqualTo(id));
+            Assert.That(mapped.ByteVal, Is.EqualTo((byte)7));
+            Assert.That(mapped.ShortVal, Is.EqualTo((short)42));
+        }
+
+        [Test]
+        public void Map_DateOnlyAndTimeOnly_SameTypeInstances()
+        {
+            var nested = ChildrenNested();
+            var row = new Dictionary<string, object>
+            {
+                ["Day"] = new DateOnly(2026, 3, 4),
+                ["Start"] = new TimeOnly(8, 30),
+                ["Children"] = "[]"
+            };
+            var mapped = NestedListMapper.Map<DateTimePartsParent>(new[] { row }, new[] { nested })[0];
+            Assert.That(mapped.Day, Is.EqualTo(new DateOnly(2026, 3, 4)));
+            Assert.That(mapped.Start, Is.EqualTo(new TimeOnly(8, 30)));
+        }
+
+        [Test]
+        public void Map_TimeOnly_LooseTextFallback()
+        {
+            var nested = ChildrenNested();
+            var row = new Dictionary<string, object>
+            {
+                ["Start"] = "8:30 AM",
+                ["Children"] = "[]"
+            };
+            var mapped = NestedListMapper.Map<TimeOnlyParent>(new[] { row }, new[] { nested })[0];
+            Assert.That(mapped.Start, Is.EqualTo(new TimeOnly(8, 30)));
+        }
+
+        [Test]
+        public void Map_DateOnly_LooseTextFallback()
+        {
+            var nested = ChildrenNested();
+            // DateOnly.TryParse often rejects a full timestamp; DateTime.TryParse then supplies the day.
+            var row = new Dictionary<string, object>
+            {
+                ["Day"] = "2026-07-31T15:30:00.123",
+                ["Children"] = "[]"
+            };
+            var mapped = NestedListMapper.Map<DateOnlyParent>(new[] { row }, new[] { nested })[0];
+            Assert.That(mapped.Day, Is.EqualTo(new DateOnly(2026, 7, 31)));
+        }
+
+        [Test]
+        public void Map_TimeOnly_ParseFallback_ThrowsOnGarbage()
+        {
+            var nested = ChildrenNested();
+            Assert.Throws<FormatException>(() =>
+                NestedListMapper.Map<TimeOnlyParent>(
+                    new[] { new Dictionary<string, object> { ["Start"] = "not-a-time", ["Children"] = "[]" } },
+                    new[] { nested }));
+        }
+
+        [Test]
+        public void Map_DateOnly_ParseFallback_ThrowsOnGarbage()
+        {
+            var nested = ChildrenNested();
+            Assert.Throws<FormatException>(() =>
+                NestedListMapper.Map<DateOnlyParent>(
+                    new[] { new Dictionary<string, object> { ["Day"] = "not-a-day", ["Children"] = "[]" } },
+                    new[] { nested }));
+        }
+
+        [Test]
+        public void ParseList_NullableDateOnlyWrite_HasValue_AndNullGrandchildren()
+        {
+            var list = (List<FlexibleDto>)NestedListMapper.ParseList(
+                typeof(FlexibleDto),
+                """[{"active":false,"amount":1,"when":"2026-01-01T00:00:00Z","day":"2026-01-01","optionalDay":"2026-07-31","grandchildren":null}]""");
+            Assert.That(list[0].OptionalDay, Is.EqualTo(new DateOnly(2026, 7, 31)));
+            Assert.That(list[0].Grandchildren, Is.Null);
+
+            string json = JsonSerializer.Serialize(list, NestedListMapper.SharedJsonOptions);
+            Assert.That(json, Does.Contain("2026-07-31"));
+            var again = (List<FlexibleDto>)NestedListMapper.ParseList(typeof(FlexibleDto), json);
+            Assert.That(again[0].OptionalDay, Is.EqualTo(new DateOnly(2026, 7, 31)));
+        }
+
+        [Test]
+        public void Map_TimeOnlyFromTimeSpan_AndDateOnlyFromDateTime()
+        {
+            var nested = ChildrenNested();
+            var row = new Dictionary<string, object>
+            {
+                ["Start"] = TimeSpan.FromMinutes(90),
+                ["Day"] = new DateTime(2026, 3, 4, 8, 0, 0, DateTimeKind.Utc),
+                ["Children"] = "[]"
+            };
+            var mapped = NestedListMapper.Map<DateTimePartsParent>(new[] { row }, new[] { nested })[0];
+            Assert.That(mapped.Start, Is.EqualTo(new TimeOnly(1, 30)));
+            Assert.That(mapped.Day, Is.EqualTo(new DateOnly(2026, 3, 4)));
+        }
+
+        [Test]
+        public void Map_EnumFromString_AndBoolFromYesNo()
+        {
+            var nested = ChildrenNested();
+            var row = new Dictionary<string, object>
+            {
+                ["Status"] = "Active",
+                ["Flag"] = "yes",
+                ["Children"] = "[]"
+            };
+            // bool.Parse accepts only true/false; "yes" exercises bool.Parse failure path via FormatException or true for some cultures — use Yes which bool.Parse rejects
+            Assert.Throws<FormatException>(() =>
+                NestedListMapper.Map<EnumFlagParent>(new[] { row }, new[] { nested }));
+
+            row["Flag"] = "True";
+            var mapped = NestedListMapper.Map<EnumFlagParent>(new[] { row }, new[] { nested })[0];
+            Assert.That(mapped.Status, Is.EqualTo(StatusKind.Active));
+            Assert.That(mapped.Flag, Is.True);
+        }
+
+        private sealed class IListParent
+        {
+            public string Id { get; set; }
+            public System.Collections.Generic.IList<ChildDto> Children { get; set; }
+        }
+
+        private sealed class DateTimePartsParent
+        {
+            public TimeOnly Start { get; set; }
+            public DateOnly Day { get; set; }
+            public List<ChildDto> Children { get; set; }
+        }
+
+        private sealed class EnumFlagParent
+        {
+            public StatusKind Status { get; set; }
+            public bool Flag { get; set; }
+            public List<ChildDto> Children { get; set; }
+        }
+
         private sealed class DateOnlyParent
         {
             public DateOnly Day { get; set; }
@@ -339,6 +533,14 @@ namespace Beztek.Facade.Sql.Test
         {
             public Guid ExternalId { get; set; }
             public string Name { get; set; }
+            public List<ChildDto> Children { get; set; }
+        }
+
+        private sealed class GuidByteParent
+        {
+            public Guid ExternalId { get; set; }
+            public byte ByteVal { get; set; }
+            public short ShortVal { get; set; }
             public List<ChildDto> Children { get; set; }
         }
 

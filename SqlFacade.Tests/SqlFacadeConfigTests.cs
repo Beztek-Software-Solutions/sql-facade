@@ -238,6 +238,64 @@ namespace Beztek.Facade.Sql.Test
             Assert.That(config.ResolveConnectionString(), Is.EqualTo("Host=provided;Database=b;Username=c;Password=full"));
         }
 
+        [Test]
+        public void Equals_AndGetHashCode_IncludePasswordProviderIdentity()
+        {
+            Func<SqlPassword> provider = () => new SqlPassword("t", DateTimeOffset.UtcNow.AddMinutes(15));
+            var withProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.POSTGRES, "Host=a;Database=b;Username=c")
+            {
+                PasswordProvider = provider
+            };
+            var sameProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.POSTGRES, "Host=a;Database=b;Username=c")
+            {
+                PasswordProvider = provider
+            };
+            var differentProvider = new SqlFacadeConfig(Beztek.Facade.Sql.DbType.POSTGRES, "Host=a;Database=b;Username=c")
+            {
+                PasswordProvider = () => new SqlPassword("other", DateTimeOffset.UtcNow.AddMinutes(15))
+            };
+
+            Assert.That(withProvider.Equals(sameProvider), Is.True);
+            Assert.That(withProvider.GetHashCode(), Is.EqualTo(sameProvider.GetHashCode()));
+            Assert.That(withProvider.Equals(differentProvider), Is.False);
+            Assert.That(withProvider.GetHashCode(), Is.Not.EqualTo(
+                new SqlFacadeConfig(Beztek.Facade.Sql.DbType.POSTGRES, "Host=a;Database=b;Username=c").GetHashCode()));
+        }
+
+        [Test]
+        [TestCase(Beztek.Facade.Sql.DbType.SQLSERVER, "Server=localhost;Database=x;User ID=u;", "pwd")]
+        [TestCase(Beztek.Facade.Sql.DbType.MYSQL, "Server=localhost;Database=x;User ID=u;", "pwd")]
+        [TestCase(Beztek.Facade.Sql.DbType.MARIADB, "Server=localhost;Database=x;User ID=u;", "pwd")]
+        [TestCase(Beztek.Facade.Sql.DbType.ORACLE, "User Id=u;Data Source=localhost:1521/XEPDB1;", "pwd")]
+        [TestCase(Beztek.Facade.Sql.DbType.SQLITE, "Data Source=:memory:", "ignored")]
+        public void ResolveConnectionString_PasswordProvider_AppliesPerEngine(
+            Beztek.Facade.Sql.DbType dbType,
+            string connectionString,
+            string password)
+        {
+            var config = new SqlFacadeConfig(dbType, connectionString)
+            {
+                PasswordProvider = () => new SqlPassword(password, DateTimeOffset.UtcNow.AddMinutes(15))
+            };
+
+            string resolved = config.ResolveConnectionString();
+            if (dbType == Beztek.Facade.Sql.DbType.SQLITE)
+                Assert.That(resolved, Is.EqualTo(connectionString));
+            else
+                Assert.That(resolved, Does.Contain(password).IgnoreCase);
+        }
+
+        [Test]
+        public void ResolveConnectionString_PasswordProvider_UnsupportedDbType_Throws()
+        {
+            var config = new SqlFacadeConfig((Beztek.Facade.Sql.DbType)999, "x=y")
+            {
+                PasswordProvider = () => new SqlPassword("pwd", DateTimeOffset.UtcNow.AddMinutes(15))
+            };
+
+            Assert.Throws<ArgumentException>(() => config.ResolveConnectionString());
+        }
+
         private sealed class ManualTimeProvider : TimeProvider
         {
             private DateTimeOffset _utc;
